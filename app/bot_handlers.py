@@ -47,6 +47,12 @@ async def start(message: Message) -> None:
         await message.answer(t["welcome"], reply_markup=kb)
 
 
+@dp.message(Command("id"))
+async def my_id(message: Message) -> None:
+    # handy for setting ADMIN_IDS: the numeric id is what the bot needs, a @username can change
+    await message.answer(f"Telegram ID: <code>{message.from_user.id}</code>")
+
+
 @dp.message(Command("admin"))
 async def admin(message: Message) -> None:
     if message.from_user.id not in ADMIN_IDS:
