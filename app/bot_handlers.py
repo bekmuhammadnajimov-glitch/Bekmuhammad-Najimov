@@ -19,11 +19,13 @@ dp = Dispatcher()
 
 TEXT = {
     "uz": {
+        "fallback": "Buyurtma berish uchun «Ochish» tugmasini bosing, savol bo'lsa admin bilan bog'laning 👇",
         "welcome": "UC tanlang, ID kiriting, to'lang — qolganini biz bajaramiz.",
         "open": "🚀 Ochish",
         "admin": "💬 Admin",
     },
     "ru": {
+        "fallback": "Чтобы сделать заказ, нажмите «Открыть», а по вопросам напишите админу 👇",
         "welcome": "Выберите UC, введите ID, оплатите — остальное мы сделаем сами.",
         "open": "🚀 Открыть",
         "admin": "💬 Админ",
@@ -31,19 +33,27 @@ TEXT = {
 }
 
 
-@dp.message(CommandStart())
-async def start(message: Message) -> None:
+async def _lang_of(message: Message) -> str:
     lang = "ru" if (message.from_user.language_code or "").startswith("ru") else "uz"
     row = await db.fetchone("SELECT lang FROM users WHERE tg_id = ?", (message.from_user.id,))
-    if row and row["lang"]:
-        lang = row["lang"]
+    return row["lang"] if row and row["lang"] else lang
+
+
+def _main_kb(lang: str) -> InlineKeyboardMarkup | None:
     t = TEXT[lang]
     buttons = []
     if WEBAPP_URL:
         buttons.append(InlineKeyboardButton(text=t["open"], web_app=WebAppInfo(url=WEBAPP_URL)))
     if SUPPORT_USERNAME:  # opens the owner's Telegram profile so customers can write to them
         buttons.append(InlineKeyboardButton(text=t["admin"], url=f"https://t.me/{SUPPORT_USERNAME}"))
-    kb = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
+    return InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
+
+
+@dp.message(CommandStart())
+async def start(message: Message) -> None:
+    lang = await _lang_of(message)
+    t = TEXT[lang]
+    kb = _main_kb(lang)
     banner = WEBAPP_DIR / "assets" / f"banner_{lang}.png"
     if banner.exists():
         await message.answer_photo(FSInputFile(banner), caption=t["welcome"], reply_markup=kb)
@@ -196,3 +206,11 @@ async def retry_order(cb: CallbackQuery) -> None:
     await db.update_order(order_id, status="paid", error=None)
     fulfillment.start(order_id)
     await cb.answer("Qayta ishga tushirildi")
+
+
+# Must stay the LAST handler: it answers anything the handlers above did not take (plain text, photos, stickers,
+# unknown commands) in private chats with the same "Open" and "Admin" buttons.
+@dp.message(F.chat.type == "private")
+async def fallback(message: Message) -> None:
+    lang = await _lang_of(message)
+    await message.answer(TEXT[lang]["fallback"], reply_markup=_main_kb(lang))
