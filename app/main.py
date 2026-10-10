@@ -41,6 +41,8 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(
             "Unsafe config: FULFILLMENT_MODE=live requires a real PAYMENT_PROVIDER (not mock) and DEV_MODE=0"
         )
+    if FULFILLMENT_MODE != "live" and PAYMENT_PROVIDER != "mock":
+        log.warning("REAL payments are on but FULFILLMENT_MODE=%s: customers can pay and the UC will NOT really be delivered", FULFILLMENT_MODE)
     if PAYMENT_PROVIDER == "click" and not CLICK_READY:
         log.warning("PAYMENT_PROVIDER=click but CLICK_SERVICE_ID / CLICK_MERCHANT_ID / CLICK_SECRET_KEY are not all set: so'm payments will be unavailable")
     if PAYMENT_PROVIDER == "manual_card" and not ((CARD_NUMBER or CARD_RUB_NUMBER) and ADMIN_IDS):
@@ -56,7 +58,7 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 log.warning("could not set menu button: %s", e)
         try:
-            click.bot_username = (await notify.bot.get_me()).username  # for Click's "return to the bot" link
+            click.bot_username = notify.bot_username = (await notify.bot.get_me()).username  # for Click's return link and the pay links
         except Exception as e:
             log.warning("could not read the bot username: %s", e)
         try:  # the "/" menu everyone sees, in the user's own Telegram language

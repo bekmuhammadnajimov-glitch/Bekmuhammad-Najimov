@@ -16,6 +16,7 @@ def _ids(name: str) -> list[int]:
 
 
 BOT_TOKEN = "" if _bool("DISABLE_BOT") else os.getenv("BOT_TOKEN", "").strip()  # DISABLE_BOT=1 for test instances
+BOT_USERNAME = os.getenv("BOT_USERNAME", "").strip().lstrip("@")  # normally read from Telegram at startup
 WEBAPP_URL = os.getenv("WEBAPP_URL", "").strip().rstrip("/")
 if not WEBAPP_URL and os.getenv("RAILWAY_PUBLIC_DOMAIN"):  # Railway's generated https domain
     WEBAPP_URL = "https://" + os.environ["RAILWAY_PUBLIC_DOMAIN"].strip()
@@ -53,10 +54,14 @@ def provider_for(currency: str) -> str:
     return PAYMENT_PROVIDER
 CARD_NUMBER = os.getenv("CARD_NUMBER", "").strip()  # so'm card
 CARD_HOLDER = os.getenv("CARD_HOLDER", "").strip()
+CARD_BANK = os.getenv("CARD_BANK", "").strip()  # e.g. "Humo · Hamkorbank", shown under the card number
 CARD_RUB_NUMBER = os.getenv("CARD_RUB_NUMBER", "").strip()  # ruble card
 CARD_RUB_HOLDER = os.getenv("CARD_RUB_HOLDER", "").strip()
 CARD_RUB_BANK = os.getenv("CARD_RUB_BANK", "").strip()
 PAYMENT_TTL_MIN = 30
+# Secret that lets the Click link report money that arrived on the card (POST /api/incoming). Empty = endpoint off.
+INCOMING_SECRET = os.getenv("INCOMING_SECRET", "").strip()
+AUTO_MATCH_WINDOW_MIN = int(os.getenv("AUTO_MATCH_WINDOW_MIN", "45"))
 
 DEV_MODE = _bool("DEV_MODE")
 DEV_USER_ID = int(os.getenv("DEV_USER_ID", "1"))

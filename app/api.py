@@ -1,26 +1,24 @@
 import asyncio
+import hmac
 import json
 import re
 import time
 import uuid
 from collections import defaultdict, deque
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
-from . import click, db, fulfillment, notify
+from . import click, db, fulfillment, notify, payments
 from .auth import current_user
 from .config import (
-    CARD_HOLDER,
     CARD_NUMBER,
-    CARD_RUB_BANK,
-    CARD_RUB_HOLDER,
     CARD_RUB_NUMBER,
     CLICK_READY,
     CURRENCIES,
+    INCOMING_SECRET,
     PAYMENT_TTL_MIN,
     PUBG_VALIDATE_CATEGORY,
-    RECEIPTS_DIR,
     SUPPORT_USERNAME,
     provider_for,
 )
@@ -53,6 +51,10 @@ def _rate_limit(tg_id: int, limit: int = 20, window: int = 60) -> None:
     q.append(now)
 
 
+def _money(amount: int, currency: str) -> str:
+    return f"{amount:,} {'₽' if currency == 'RUB' else 'so' + chr(39) + 'm'}".replace(",", " ")
+
+
 def _payment_view(order: dict) -> dict:
     provider = provider_for(order["currency"])
     if provider == "click":
@@ -64,14 +66,13 @@ def _payment_view(order: dict) -> dict:
             "currency": order["currency"],
         }
     if provider == "manual_card":
-        rub = order["currency"] == "RUB"
-        number = CARD_RUB_NUMBER if rub else CARD_NUMBER
+        # Card transfer: the card number, exact amount and the receipt step all live in the bot chat.
+        number = CARD_RUB_NUMBER if order["currency"] == "RUB" else CARD_NUMBER
+        username = notify.bot_username
         return {
-            "provider": "manual_card",
-            "card_number": number,
-            "holder": CARD_RUB_HOLDER if rub else CARD_HOLDER,
-            "bank": CARD_RUB_BANK if rub else "",
-            "available": bool(number),  # false until the owner sets a card for this currency
+            "provider": "bot",
+            "available": bool(number and username),  # false until a card is set for this currency
+            "bot_url": f"https://t.me/{username}?start=pay_{order['id']}" if username else "",
             "amount": order["amount"],
             "currency": order["currency"],
         }
@@ -359,7 +360,14 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
             "ON CONFLICT (tg_id, game, player_id) DO UPDATE SET nick = excluded.nick",
             (user["tg_id"], "pubg", pid, nick),
         )
-    return _public(await db.get_order(order_id))
+    order = await db.get_order(order_id)
+    await notify.admin_event(
+        "order_created",
+        f"🛒 <b>Yangi buyurtma</b> · {db.code(order_id)}\n{title} · {_money(price, body.currency)}\n"
+        f"ID: <code>{pid}</code> · {nick or '—'}\nTo'lov: botda kutilmoqda",
+        order,
+    )
+    return _public(order)
 
 
 @router.get("/orders")
@@ -382,7 +390,9 @@ async def cancel_order(order_id: str, user: dict = Depends(current_user)):
     if order["status"] != "awaiting_payment":
         raise HTTPException(409, "cannot_cancel")
     await db.update_order(order_id, status="cancelled")
-    return _public(await db.get_order(order_id))
+    order = await db.get_order(order_id)
+    await notify.admin_event("cancelled", f"🚫 <b>Mijoz buyurtmani bekor qildi</b> · {db.code(order_id)}", order)
+    return _public(order)
 
 
 @router.post("/orders/{order_id}/mock-pay")
@@ -397,25 +407,28 @@ async def mock_pay(order_id: str, user: dict = Depends(current_user)):
     return _public(await db.get_order(order_id))
 
 
-@router.post("/orders/{order_id}/receipt")
-async def upload_receipt(order_id: str, file: UploadFile, user: dict = Depends(current_user)):
-    order = await _own_order(order_id, user)
-    if provider_for(order["currency"]) != "manual_card":
-        raise HTTPException(404, "not_found")
-    if order["status"] != "awaiting_payment":
-        raise HTTPException(409, "cannot_pay")
-    if not (file.content_type or "").startswith("image/"):
-        raise HTTPException(415, "image_only")
-    data = await file.read()
-    if not data or len(data) > 8 * 1024 * 1024:
-        raise HTTPException(413, "bad_size")
-    path = RECEIPTS_DIR / f"{order_id}.img"
-    path.write_bytes(data)
-    await db.update_order(order_id, status="payment_review", receipt_file=str(path))
-    order = await db.get_order(order_id)
-    await notify.admin_receipt(order, str(path))
-    return _public(order)
+class IncomingIn(BaseModel):
+    ref: str
+    amount: int
+    currency: str = "UZS"
+    paid_at: int | None = None
+    payer: str = ""
+    source: str = "click"
 
+
+@router.post("/incoming")
+async def incoming(body: IncomingIn, x_webhook_secret: str = Header(default="")):
+    """The Click link reports money that really arrived on the card; the matching waiting order is confirmed on the spot."""
+    if not INCOMING_SECRET:
+        raise HTTPException(404, "not_found")
+    if not hmac.compare_digest(x_webhook_secret, INCOMING_SECRET):
+        raise HTTPException(401, "unauthorized")
+    if body.amount <= 0 or body.currency not in CURRENCIES or not body.ref.strip():
+        raise HTTPException(422, "bad_payment")
+    iid = await payments.record_incoming(body.ref.strip(), body.amount, body.currency, body.paid_at, body.payer, body.source)
+    if iid is None:
+        return {"ok": True, "duplicate": True}
+    return {"ok": True, "result": await payments.match_incoming(iid)}
 
 # ---------------------------------------------------------------- saved ids
 @router.delete("/ids/{saved_id}")

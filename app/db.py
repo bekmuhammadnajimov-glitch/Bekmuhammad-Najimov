@@ -36,6 +36,19 @@ CREATE TABLE IF NOT EXISTS click_tx (
     created_at INTEGER, updated_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_click_order ON click_tx (order_id);
+-- everything that happens, newest last: the admin panel shows it and every entry is also pushed to the admins
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, kind TEXT NOT NULL,
+    order_id TEXT, tg_id INTEGER, text TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events (ts DESC);
+-- money that really arrived on the card (fed by the Click link later); an order is auto-confirmed only against these rows
+CREATE TABLE IF NOT EXISTS incoming_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ref TEXT NOT NULL UNIQUE, amount INTEGER NOT NULL, currency TEXT NOT NULL DEFAULT 'UZS',
+    paid_at INTEGER NOT NULL, payer TEXT, source TEXT, raw TEXT, order_id TEXT, created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_incoming_open ON incoming_payments (order_id, amount);
+CREATE INDEX IF NOT EXISTS idx_click_order2 ON click_tx (order_id);
 CREATE INDEX IF NOT EXISTS idx_orders_user ON orders (tg_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders (status);
 """
@@ -51,6 +64,9 @@ async def init() -> None:
     # lightweight migration: orders gained a JSON list of purchased items
     async with _db.execute("PRAGMA table_info(orders)") as cur:
         cols = {r["name"] for r in await cur.fetchall()}
+    for col, ddl in (("receipt_at", "INTEGER"), ("pay_opened_at", "INTEGER")):
+        if col not in cols:
+            await _db.execute(f"ALTER TABLE orders ADD COLUMN {col} {ddl}")
     if "items" not in cols:
         await _db.execute("ALTER TABLE orders ADD COLUMN items TEXT")
     async with _db.execute("PRAGMA table_info(users)") as cur:
@@ -98,9 +114,10 @@ def now() -> int:
     return int(time.time())
 
 
-async def touch_user(tg_user) -> None:
+async def touch_user(tg_user) -> bool:
     """Record anyone who talks to the bot (not only those who open the Mini App) and note when they were last seen."""
     lang = "ru" if (tg_user.language_code or "").startswith("ru") else "uz"
+    is_new = (await fetchone("SELECT 1 AS x FROM users WHERE tg_id = ?", (tg_user.id,))) is None
     await execute(
         """INSERT INTO users (tg_id, first_name, last_name, username, lang, created_at, last_seen)
            VALUES (?,?,?,?,?,?,?)
@@ -108,6 +125,7 @@ async def touch_user(tg_user) -> None:
                                              username = excluded.username, last_seen = excluded.last_seen""",
         (tg_user.id, tg_user.first_name, tg_user.last_name, tg_user.username, lang, now(), now()),
     )
+    return is_new
 
 
 def code(order_id: str) -> str:

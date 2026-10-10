@@ -169,6 +169,13 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
 }
 
+// Opens the bot chat (payment instructions) and closes the Mini App so the customer lands right in the conversation.
+function goBot(url) {
+  if (!url) return;
+  if (tg && tg.openTelegramLink) { tg.openTelegramLink(url); setTimeout(() => { try { tg.close(); } catch (_) {} }, 350); }
+  else window.open(url, '_blank');
+}
+
 function openExternal(url) {
   if (tg && tg.openLink) tg.openLink(url); else window.open(url, '_blank');
 }
@@ -473,20 +480,14 @@ function payBody() {
   const o = S.co.order;
   const p = o.payment || {};
   let pay;
-  if (p.provider === 'manual_card') {
-    const r = S.co.receipt;
+  if (p.provider === 'bot') {
     pay = `<div class="card pay-card">
-      <div class="pay-title"><span>${t('card_transfer')}</span><span class="timer">${ic('clock', 'sm')}<span id="timer">${timerText(o)}</span></span></div>
+      <div class="pay-title"><span>${t('pay_bot_title')}</span><span class="timer">${ic('clock', 'sm')}<span id="timer">${timerText(o)}</span></span></div>
       ${p.available ? '' : `<div class="notice" style="margin-bottom:12px">${ic('alert', 'sm')}<span>${t('pay_unavailable')}</span></div>`}
-      <div class="cardnum"><div><div class="num">${esc(p.card_number || '— — — —')}</div><div class="holder">${esc(p.holder || '')}${p.bank ? ` · ${esc(p.bank)}` : ''}</div></div>
-        <button class="copy" data-act="copy" data-text="${esc((p.card_number || '').replace(/\s/g, ''))}" aria-label="copy">${ic('copy', 'sm')}</button></div>
+      <div class="botbox"><div class="botlogo">${ic('send')}</div><div><b>${money(o.amount, o.currency)}</b><span>${t('pay_bot_sub')}</span></div></div>
       <ol class="steps-list" style="margin-top:18px">
-        <li>${t('pay_step1', { amount: `<b>${money(o.amount, o.currency)}</b>` })}</li>
-        <li>${t('pay_step2')}</li><li>${t('pay_step3')}</li></ol>
-      <label class="upload" for="receipt">${r ? `<img src="${r.url}" alt=""><span class="name">${esc(r.file.name)}</span>${ic('check', 'sm')}` : `${ic('upload')}<span class="name">${t('upload_receipt')}</span>`}</label>
-      <input id="receipt" type="file" accept="image/*" hidden></div>
-      <div class="notice mt">${ic('shield', 'sm')}<span>${t('review_note')}</span></div>`;
-  } else if (p.provider === 'click') {
+        <li>${t('pay_bot_s1')}</li><li>${t('pay_bot_s2', { amount: `<b>${money(o.amount, o.currency)}</b>` })}</li><li>${t('pay_bot_s3')}</li></ol></div>
+      <div class="notice mt">${ic('shield', 'sm')}<span>${t('pay_bot_note')}</span></div>`;  } else if (p.provider === 'click') {
     pay = `<div class="card pay-card">
       <div class="pay-title"><span>${t('click_title')}</span><span class="timer">${ic('clock', 'sm')}<span id="timer">${timerText(o)}</span></span></div>
       ${p.available ? '' : `<div class="notice" style="margin-bottom:12px">${ic('alert', 'sm')}<span>${t('pay_unavailable')}</span></div>`}
@@ -498,8 +499,8 @@ function payBody() {
     pay = `<div class="card pay-card"><div class="pay-title"><span>${t('demo_title')}</span><span class="timer">${ic('clock', 'sm')}<span id="timer">${timerText(o)}</span></span></div>
       <div class="notice">${ic('alert', 'sm')}<span>${t('demo_note')}</span></div></div>`;
   }
-  const lbl = p.provider === 'manual_card' ? t('sent_receipt') : p.provider === 'click' ? t('pay_click') : t('demo_pay');
-  const dis = (p.provider === 'manual_card' && (!p.available || !S.co.receipt)) || (p.provider === 'click' && !p.available);
+  const lbl = p.provider === 'bot' ? t('go_bot') : p.provider === 'click' ? t('pay_click') : t('demo_pay');
+  const dis = (p.provider === 'bot' || p.provider === 'click') && !p.available;
   return `${stepper(3)}${summaryCard(o)}${pay}
     <button class="text-btn" data-act="cancel-order">${t('cancel_order')}</button>
     ${cta(money(o.amount, o.currency), lbl, dis, 'pay')}`;
@@ -511,8 +512,9 @@ after.pay = async () => {
     await ensureOrder();
     const box = $('#paybox'); if (!box || cur().name !== 'pay') return;
     box.innerHTML = payBody();
-    bindReceipt();
     startPayTimer();
+    const o = S.co.order, p = o.payment || {};
+    if (p.provider === 'bot' && p.available && !o._jumped) { o._jumped = true; goBot(p.bot_url); }  // straight into the bot chat
   } catch (e) {
     const box = $('#paybox'); if (!box) return;
     const pending = e.code === 'too_many_pending';
@@ -531,10 +533,19 @@ function bindReceipt() {
 }
 function startPayTimer() {
   clearTimers();
+  let tick = 0;
   S.timer = setInterval(() => {
     const el = $('#timer'); const o = S.co.order;
     if (!el || !o) return clearTimers();
     el.textContent = timerText(o);
+    if (++tick % 4 === 0) {
+      api('/orders/' + o.id).then((cur_) => {
+        if (cur().name === 'pay' && S.co.order && S.co.order.id === cur_.id && cur_.status !== 'awaiting_payment') {
+          clearTimers(); S.viewOrder = cur_; S.co = freshCo();
+          setStack([{ name: 'home' }, { name: 'order', params: { id: cur_.id } }]); refreshBoot();
+        }
+      }).catch(() => {});
+    }
     if (o.expires_at <= Math.floor(Date.now() / 1000)) { clearTimers(); toast(t('order_expired')); S.co.order = null; setStack([{ name: 'home' }]); }
   }, 1000);
 }
@@ -771,9 +782,10 @@ const actions = {
         // Click confirms the payment to our server by itself; open its page and watch the order status.
         openExternal(o.payment.url);
         done = o;
-      } else if (o.payment && o.payment.provider === 'manual_card') {
-        const fd = new FormData(); fd.append('file', co.receipt.file);
-        done = await api(`/orders/${o.id}/receipt`, { method: 'POST', body: fd });
+      } else if (o.payment && o.payment.provider === 'bot') {
+        goBot(o.payment.bot_url);  // the card, the exact amount and the receipt step are in the bot chat
+        co.busy = false; el.disabled = false;
+        return;
       } else {
         done = await api(`/orders/${o.id}/mock-pay`, { method: 'POST' });
       }
