@@ -2,7 +2,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from aiogram.types import MenuButtonWebApp, WebAppInfo
+from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonWebApp, WebAppInfo
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
@@ -59,6 +59,19 @@ async def lifespan(app: FastAPI):
             click.bot_username = (await notify.bot.get_me()).username  # for Click's "return to the bot" link
         except Exception as e:
             log.warning("could not read the bot username: %s", e)
+        for admin_id in ADMIN_IDS:  # the "/" command menu shows these only in the admin's own chat
+            try:
+                await notify.bot.set_my_commands(
+                    [
+                        BotCommand(command="admin", description="Admin panel"),
+                        BotCommand(command="users", description="Foydalanuvchilar ro'yxati"),
+                        BotCommand(command="count", description="Nechta odam bor"),
+                        BotCommand(command="id", description="Mening Telegram ID'im"),
+                    ],
+                    scope=BotCommandScopeChat(chat_id=admin_id),
+                )
+            except Exception as e:
+                log.warning("could not set admin commands for %s: %s", admin_id, e)
         polling = asyncio.create_task(dp.start_polling(notify.bot, handle_signals=False))
     else:
         log.warning("BOT_TOKEN is empty: the bot is off and only DEV_MODE requests can authenticate")

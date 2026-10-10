@@ -47,7 +47,7 @@ async def current_user(x_init_data: str = Header(default="")) -> dict:
         )
     else:
         await db.execute(
-            "UPDATE users SET first_name=?, last_name=?, username=?, photo_url=? WHERE tg_id=?",
-            (tg.get("first_name"), tg.get("last_name"), tg.get("username"), tg.get("photo_url"), tg["id"]),
+            "UPDATE users SET first_name=?, last_name=?, username=?, photo_url=?, last_seen=? WHERE tg_id=?",
+            (tg.get("first_name"), tg.get("last_name"), tg.get("username"), tg.get("photo_url"), db.now(), tg["id"]),
         )
     return await db.fetchone("SELECT * FROM users WHERE tg_id = ?", (tg["id"],))

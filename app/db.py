@@ -53,6 +53,10 @@ async def init() -> None:
         cols = {r["name"] for r in await cur.fetchall()}
     if "items" not in cols:
         await _db.execute("ALTER TABLE orders ADD COLUMN items TEXT")
+    async with _db.execute("PRAGMA table_info(users)") as cur:
+        ucols = {r["name"] for r in await cur.fetchall()}
+    if "last_seen" not in ucols:
+        await _db.execute("ALTER TABLE users ADD COLUMN last_seen INTEGER")
     # amounts can now be in so'm or rubles: `amount` + `currency` replace `amount_uzs`
     if "amount_uzs" in cols:
         await _db.execute("ALTER TABLE orders RENAME COLUMN amount_uzs TO amount")
@@ -87,6 +91,18 @@ async def execute(sql: str, args: tuple = ()) -> int:
 
 def now() -> int:
     return int(time.time())
+
+
+async def touch_user(tg_user) -> None:
+    """Record anyone who talks to the bot (not only those who open the Mini App) and note when they were last seen."""
+    lang = "ru" if (tg_user.language_code or "").startswith("ru") else "uz"
+    await execute(
+        """INSERT INTO users (tg_id, first_name, last_name, username, lang, created_at, last_seen)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT (tg_id) DO UPDATE SET first_name = excluded.first_name, last_name = excluded.last_name,
+                                             username = excluded.username, last_seen = excluded.last_seen""",
+        (tg_user.id, tg_user.first_name, tg_user.last_name, tg_user.username, lang, now(), now()),
+    )
 
 
 def code(order_id: str) -> str:

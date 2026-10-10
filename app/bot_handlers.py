@@ -51,6 +51,7 @@ def _main_kb(lang: str) -> InlineKeyboardMarkup | None:
 
 @dp.message(CommandStart())
 async def start(message: Message) -> None:
+    await db.touch_user(message.from_user)
     lang = await _lang_of(message)
     t = TEXT[lang]
     kb = _main_kb(lang)
@@ -131,7 +132,7 @@ async def _orders_text() -> str:
     return "\n".join(out)
 
 
-@dp.message(Command("admin"))
+@dp.message(Command("admin"), F.from_user.id.in_(ADMIN_IDS))
 async def admin(message: Message) -> None:
     if message.from_user.id not in ADMIN_IDS:
         return
@@ -163,6 +164,82 @@ async def admin_cb(cb: CallbackQuery) -> None:
     except Exception:  # "message is not modified" when nothing changed
         pass
     await cb.answer("Yangilandi" if action == "home" else None)
+
+USERS_PER_PAGE = 20
+TZ = timezone(timedelta(hours=5))  # Tashkent
+
+
+def _person(u: dict) -> str:
+    name = html.escape(" ".join(p for p in (u["first_name"], u["last_name"]) if p) or "—")
+    nick = f"@{html.escape(u['username'])}" if u["username"] else "nik yo'q"
+    return f'<a href="tg://user?id={u["tg_id"]}">{name}</a> · {nick}'
+
+
+async def _users_page(page: int) -> tuple[str, InlineKeyboardMarkup | None]:
+    total = (await db.fetchone("SELECT COUNT(*) AS n FROM users"))["n"]
+    pages = max(1, -(-total // USERS_PER_PAGE))
+    page = min(max(page, 0), pages - 1)
+    rows = await db.fetchall(
+        """SELECT u.*, (SELECT COUNT(*) FROM orders o WHERE o.tg_id = u.tg_id AND o.status = 'completed') AS bought
+           FROM users u ORDER BY COALESCE(u.last_seen, u.created_at) DESC LIMIT ? OFFSET ?""",
+        (USERS_PER_PAGE, page * USERS_PER_PAGE),
+    )
+    if not rows:
+        return "👥 <b>Foydalanuvchilar</b>\n\nHozircha hech kim yo'q", None
+    lines = [f"👥 <b>Foydalanuvchilar: {total}</b> · {page + 1}/{pages}-sahifa\n"]
+    for n, u in enumerate(rows, start=page * USERS_PER_PAGE + 1):
+        seen = datetime.fromtimestamp(u["last_seen"] or u["created_at"], TZ).strftime("%d.%m %H:%M")
+        bought = f" · 🛒 {u['bought']}" if u["bought"] else ""
+        lines.append(f"{n}. {_person(u)}\n    <code>{u['tg_id']}</code> · {seen}{bought}")
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️ Oldingi", callback_data=f"usr:{page - 1}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton(text="Keyingi ▶️", callback_data=f"usr:{page + 1}"))
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=[nav]) if nav else None
+
+
+@dp.message(Command("users"), F.from_user.id.in_(ADMIN_IDS))
+async def users_cmd(message: Message) -> None:
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    text, kb = await _users_page(0)
+    await message.answer(text, reply_markup=kb, disable_web_page_preview=True)
+
+
+@dp.callback_query(F.data.startswith("usr:"))
+async def users_page_cb(cb: CallbackQuery) -> None:
+    if cb.from_user.id not in ADMIN_IDS:
+        return await cb.answer("Ruxsat yo'q", show_alert=True)
+    text, kb = await _users_page(int(cb.data.split(":", 1)[1]))
+    try:
+        await cb.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
+    except Exception:
+        pass
+    await cb.answer()
+
+
+@dp.message(Command("count"), F.from_user.id.in_(ADMIN_IDS))
+async def count_cmd(message: Message) -> None:
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    day = 24 * 3600
+    now = db.now()
+    midnight = int(datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    one = lambda sql, *a: db.fetchone(sql, a)  # noqa: E731
+    total = (await one("SELECT COUNT(*) AS n FROM users"))["n"]
+    today = (await one("SELECT COUNT(*) AS n FROM users WHERE created_at >= ?", midnight))["n"]
+    week = (await one("SELECT COUNT(*) AS n FROM users WHERE created_at >= ?", now - 7 * day))["n"]
+    active = (await one("SELECT COUNT(*) AS n FROM users WHERE COALESCE(last_seen, created_at) >= ?", now - 7 * day))["n"]
+    buyers = (await one("SELECT COUNT(DISTINCT tg_id) AS n FROM orders WHERE status = 'completed'"))["n"]
+    await message.answer(
+        "📊 <b>Bot foydalanuvchilari</b>\n\n"
+        f"Jami: <b>{total}</b>\n"
+        f"Bugun qo'shilgan: <b>{today}</b>\n"
+        f"Oxirgi 7 kunda qo'shilgan: <b>{week}</b>\n"
+        f"Oxirgi 7 kunda faol: <b>{active}</b>\n"
+        f"Xarid qilganlar: <b>{buyers}</b>"
+    )
 
 @dp.callback_query(F.data.startswith("pay:"))
 async def payment_decision(cb: CallbackQuery) -> None:
@@ -212,5 +289,6 @@ async def retry_order(cb: CallbackQuery) -> None:
 # unknown commands) in private chats with the same "Open" and "Admin" buttons.
 @dp.message(F.chat.type == "private")
 async def fallback(message: Message) -> None:
+    await db.touch_user(message.from_user)
     lang = await _lang_of(message)
     await message.answer(TEXT[lang]["fallback"], reply_markup=_main_kb(lang))
