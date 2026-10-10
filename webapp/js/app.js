@@ -233,7 +233,9 @@ const thumbHTML = (p) => (p.section === 'uc'
   ? `<div class="mini-uc">${ucImg(ucLevels(p)[0])}</div>`
   : `<div class="mini-plate">${plate(plateLabel(p), { detail: false, tone: p.section === 'wow' ? 'blue' : 'gold' })}</div>`);
 
-const cta = (total, label, disabled, act) => `<div class="cta-bar">
+// The bar is built inside the screen's HTML but hoisted out of #view (see hoistCta): a fixed element inside an
+// animated container is not pinned to the screen in Telegram's browser, so it only showed up at the page bottom.
+const cta = (total, label, disabled, act, hidden = false) => `<div class="cta-bar${hidden ? ' empty' : ''}">
   <div class="cta-thumb" id="cta-thumb">${S.co.pack ? thumbHTML(S.co.pack) : ''}</div>
   <div class="cta-sum"><span>${t('total')}</span><b id="cta-total">${total || '—'}</b></div>
   <button class="btn gold" id="cta-btn" data-act="${act}" ${disabled ? 'disabled' : ''}>${label} ${ic('arrow', 'sm')}</button></div>`;
@@ -328,11 +330,19 @@ function renderPacks() {
 }
 
 function syncCta() {
-  const p = S.co.pack, b = $('#cta-btn'), tot = $('#cta-total'), th = $('#cta-thumb');
+  const p = S.co.pack, b = $('#cta-btn'), tot = $('#cta-total'), th = $('#cta-thumb'), bar = $('.cta-bar');
   if (tot) tot.textContent = p ? money(priceOf(p)) : '—';
   if (th) th.innerHTML = p ? thumbHTML(p) : '';
   if (b) b.disabled = !p;
+  if (bar && cur().name === 'game') bar.classList.toggle('empty', !p); // slides up as soon as something is picked
 }
+
+// Move the bottom action bar out of #view into its own fixed slot (also when a screen re-renders part of itself).
+function hoistCta() {
+  const bar = $('#view .cta-bar'), slot = $('#ctaslot');
+  if (bar && slot) slot.replaceChildren(bar);
+}
+new MutationObserver(hoistCta).observe(document.getElementById('view'), { childList: true, subtree: true });
 
 screens.game = () => {
   const co = S.co;
@@ -346,7 +356,7 @@ screens.game = () => {
   </section>
   <div class="cur-row"><span>${ic('card', 'sm')}${t('currency_label')}</span>${curSeg()}</div>
   <div id="packs-wrap"><div class="packs" id="packs">${Array.from({ length: 6 }, () => '<div class="skeleton"></div>').join('')}</div></div>
-  ${cta(co.pack ? money(priceOf(co.pack)) : '', t('continue'), !co.pack, 'next')}`;
+  ${cta(co.pack ? money(priceOf(co.pack)) : '', t('continue'), !co.pack, 'next', !co.pack)}`;
 };
 after.game = async () => {
   try {
@@ -650,7 +660,9 @@ function render() {
   const isTab = S.stack.length === 1 && TABS.includes(c.name);
   const view = $('#view');
   view.className = 'view' + (['game', 'id', 'pay'].includes(c.name) ? ' has-cta' : '');
+  $('#ctaslot').replaceChildren(); // the previous screen's bar goes away with the screen
   view.innerHTML = screens[c.name](c.params || {});
+  hoistCta();
   view.style.animation = 'none'; void view.offsetWidth; view.style.animation = '';
   const tb = $('#tabbar');
   tb.hidden = !isTab;
@@ -677,6 +689,14 @@ const actions = {
   'retry-orders': () => render(),
   'open-order': (el) => { S.viewOrder = null; go('order', { id: el.dataset.id }); },
   'pick-pack': (el) => {
+    const cur_ = S.co.pack;
+    const same = cur_ && (el.dataset.uc ? cur_.section === 'uc' && cur_.uc === Number(el.dataset.uc) : cur_.offer_id === el.dataset.offer);
+    if (same) { // tapping the chosen pack again un-selects it
+      S.co.pack = null;
+      document.querySelectorAll('.pack').forEach((b) => b.classList.remove('sel'));
+      haptic('light'); syncCta();
+      return;
+    }
     S.co.pack = el.dataset.uc
       ? ucPack(S.ucOptions.find((x) => x.uc === Number(el.dataset.uc)))
       : S.packs.find((x) => x.offer_id === el.dataset.offer);

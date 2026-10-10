@@ -51,8 +51,9 @@ img { display: block; }
 
 /* ---------- layout ---------- */
 .app { max-width: 560px; margin: 0 auto; min-height: 100vh; position: relative; }
-.view { padding: 14px 16px calc(var(--tab-h) + 36px + env(safe-area-inset-bottom)); animation: rise .35s cubic-bezier(.2, .7, .2, 1) both; }
+.view { padding: 14px 16px calc(var(--tab-h) + 36px + env(safe-area-inset-bottom)); animation: fade .3s ease both; }
 .view.has-cta { padding-bottom: calc(124px + env(safe-area-inset-bottom)); }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 
 /* ---------- splash ---------- */
@@ -470,3 +471,11 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 .clicklogo { flex: none; padding: 8px 14px; border-radius: 12px; background: #fff; color: #0a63c9; font-size: 18px; font-weight: 800; letter-spacing: -.02em; text-transform: lowercase; }
 .clickbox b { display: block; font-size: 22px; font-weight: 800; color: #fff; }
 .clickbox span { display: block; margin-top: 4px; font-size: 12px; font-weight: 600; color: rgba(255, 255, 255, .85); }
+/* bottom action bar lives in #ctaslot (outside the animated screen) and slides up once something is chosen */
+.cta-bar { transition: transform .28s cubic-bezier(.2, .8, .2, 1), opacity .2s; will-change: transform; }
+.cta-bar.empty { transform: translateY(115%); opacity: 0; pointer-events: none; }
+#ctaslot { position: relative; z-index: 25; }
+/* game banner: keep the coin art from covering the title and chips on narrow screens */
+.gbanner-in > div:last-child { padding-right: 74px; min-width: 0; }
+.gbanner-art { width: 70px; height: 70px; right: 8px; top: 8px; }
+.gbanner-art .ucimg { width: 70px; height: 70px; }
