@@ -13,7 +13,7 @@ from aiogram.types import (
 )
 
 from . import db, fulfillment, notify
-from .config import ADMIN_IDS, FULFILLMENT_MODE, PAYMENT_PROVIDER, WEBAPP_DIR, WEBAPP_URL
+from .config import ADMIN_IDS, FULFILLMENT_MODE, PAYMENT_PROVIDER, SUPPORT_USERNAME, WEBAPP_DIR, WEBAPP_URL
 
 dp = Dispatcher()
 
@@ -21,10 +21,12 @@ TEXT = {
     "uz": {
         "welcome": "UC tanlang, ID kiriting, to'lang — qolganini biz bajaramiz.",
         "open": "🚀 Ochish",
+        "admin": "💬 Admin",
     },
     "ru": {
         "welcome": "Выберите UC, введите ID, оплатите — остальное мы сделаем сами.",
         "open": "🚀 Открыть",
+        "admin": "💬 Админ",
     },
 }
 
@@ -39,8 +41,8 @@ async def start(message: Message) -> None:
     buttons = []
     if WEBAPP_URL:
         buttons.append(InlineKeyboardButton(text=t["open"], web_app=WebAppInfo(url=WEBAPP_URL)))
-    if message.from_user.id in ADMIN_IDS:  # only admins ever see this button
-        buttons.append(InlineKeyboardButton(text="🛠 Admin", callback_data="adm:new"))
+    if SUPPORT_USERNAME:  # opens the owner's Telegram profile so customers can write to them
+        buttons.append(InlineKeyboardButton(text=t["admin"], url=f"https://t.me/{SUPPORT_USERNAME}"))
     kb = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
     banner = WEBAPP_DIR / "assets" / f"banner_{lang}.png"
     if banner.exists():
