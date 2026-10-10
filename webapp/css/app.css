@@ -479,3 +479,7 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 .gbanner-in > div:last-child { padding-right: 74px; min-width: 0; }
 .gbanner-art { width: 70px; height: 70px; right: 8px; top: 8px; }
 .gbanner-art .ucimg { width: 70px; height: 70px; }
+/* round premium emblem */
+.brand-mark { border-radius: 50%; filter: drop-shadow(0 6px 12px rgba(0, 0, 0, .55)); }
+.splash-mark img { filter: drop-shadow(0 14px 28px rgba(255, 150, 40, .35)); }
+.splash-mark::before, .splash-mark::after { border-radius: 50%; inset: -14px; }

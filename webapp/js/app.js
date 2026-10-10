@@ -54,7 +54,7 @@ const ICONS = {
 const ic = (name, cls = '') =>
   `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
 
-const LOGO = '<img class="brand-mark" src="assets/logo.svg" alt="NexDonate" width="42" height="42">';
+const LOGO = '<img class="brand-mark" src="assets/logo.webp" alt="NexDonate" width="42" height="42">';
 
 /* ---- PUBG Mobile "UC" plate: dark chamfered plate, cream-gold bevelled border, big embossed lettering ---- */
 const BARCODE = (() => {
