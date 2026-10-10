@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0a0f20">
+  <title>NexDonate</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+  <link rel="apple-touch-icon" href="assets/logo-512.png">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <!-- shared gradient defs, referenced as url(#gold) by every inline svg -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="brandBg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#2438c9"/>
+        <stop offset="1" stop-color="#7b3ae0"/>
+      </linearGradient>
+      <!-- PUBG-style UC plate: cream-gold border, dark face, embossed cream letters -->
+      <linearGradient id="plateRim" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#fbf4d8"/>
+        <stop offset=".5" stop-color="#d9cc9a"/>
+        <stop offset="1" stop-color="#9c8d58"/>
+      </linearGradient>
+      <linearGradient id="plateRimB" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#e8f8ff"/>
+        <stop offset=".5" stop-color="#98d3f0"/>
+        <stop offset="1" stop-color="#4c8cb3"/>
+      </linearGradient>
+      <linearGradient id="plateFace" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#3a3f43"/>
+        <stop offset="1" stop-color="#1b1e20"/>
+      </linearGradient>
+      <linearGradient id="plateLetter" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#fffdf0"/>
+        <stop offset=".55" stop-color="#e9ddaa"/>
+        <stop offset="1" stop-color="#b9a872"/>
+      </linearGradient>
+      <linearGradient id="plateLetterB" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#f6fdff"/>
+        <stop offset=".55" stop-color="#c3e8fb"/>
+        <stop offset="1" stop-color="#7fb8d6"/>
+      </linearGradient>
+      <linearGradient id="accent" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#ffd05a"/>
+        <stop offset="1" stop-color="#ff8a1f"/>
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <div id="splash" class="splash">
+    <div class="splash-mark"><img src="assets/logo.svg" alt="" width="112" height="112"></div>
+    <div class="splash-name">NEXDONATE</div>
+    <div class="splash-tag">Tez · Xavfsiz · Qulay</div>
+    <div class="splash-bar"><i></i></div>
+  </div>
+
+  <main id="app" class="app" hidden>
+    <div id="view" class="view"></div>
+    <nav id="tabbar" class="tabbar" hidden></nav>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="js/i18n.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
