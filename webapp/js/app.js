@@ -624,6 +624,20 @@ screens.support = () => {
   <h2 class="sec">${t('faq')}</h2><div class="list">${faq}</div>`;
 };
 
+/* ----- first run: language + payment currency ----- */
+screens.setup = () => {
+  const s = S.setup || (S.setup = { lang, cur: CUR });
+  const opt = (act, key, val, main, sub, badge) => `<button class="opt ${s[key] === val ? 'on' : ''}" data-act="${act}" data-v="${val}">
+    <span class="obadge">${badge}</span><span class="otx"><b>${main}</b>${sub ? `<small>${sub}</small>` : ''}</span><span class="ock">${ic('check', 'sm')}</span></button>`;
+  return `<div class="setup">
+    <img class="setup-logo" src="assets/logo.webp" alt="" width="84" height="84">
+    <h1>${t('setup_title')}</h1><p class="setup-sub">${t('setup_sub')}</p>
+    <h2 class="sec"><span>${t('setup_lang')}</span></h2>
+    <div class="opts">${opt('setup-pick', 'lang', 'uz', "O'zbekcha", '', 'UZ')}${opt('setup-pick', 'lang', 'ru', 'Русский', '', 'RU')}</div>
+    <h2 class="sec"><span>${t('currency_label')}</span></h2>
+    <div class="opts">${opt('setup-pick', 'cur', 'UZS', t('setup_uzs'), t('setup_uzs_sub'), "so'm")}${opt('setup-pick', 'cur', 'RUB', t('setup_rub'), t('setup_rub_sub'), '₽')}</div>
+    <button class="btn gold block mt" data-act="setup-go" id="setup-go">${t('start')} ${ic('arrow', 'sm')}</button></div>`;
+};
 /* ----- profile ----- */
 screens.profile = () => {
   const u = S.user;
@@ -710,10 +724,25 @@ const actions = {
     if (c === CUR) return;
     CUR = c; haptic('light');
     try { localStorage.setItem(CUR_KEY, c); } catch (_) {}
+    api('/currency', { method: 'POST', body: { currency: c } }).catch(() => {});
     if (cur().name === 'game') {
       document.querySelectorAll('.cur-seg').forEach((s) => { s.innerHTML = curSeg().replace(/^<div[^>]*>|<\/div>$/g, ''); });
       renderPacks(); syncCta();
     } else render();
+  },
+  'setup-pick': (el) => {
+    const s = S.setup, v = el.dataset.v;
+    if (v === 'uz' || v === 'ru') { s.lang = v; lang = v; document.documentElement.lang = v; } else { s.cur = v; }
+    haptic('light'); render();
+  },
+  'setup-go': async (el) => {
+    const s = S.setup; el.disabled = true;
+    try {
+      await api('/setup', { method: 'POST', body: { lang: s.lang, currency: s.cur } });
+      lang = s.lang; CUR = s.cur; try { localStorage.setItem(CUR_KEY, CUR); } catch (_) {}
+      S.user.lang = lang; S.user.currency = CUR; S.user.setup_done = true;
+      notice('success'); setStack([{ name: 'home' }]);
+    } catch (e) { toast(errText(e)); el.disabled = false; }
   },
   next: () => {
     if (cur().name === 'game' && S.co.pack) go('id');
@@ -794,7 +823,9 @@ async function boot() {
     S.user = b.user; S.stats = b.stats; S.games = b.games; S.savedIds = b.saved_ids; S.recent = b.recent_orders;
     S.support = b.support_username; S.provider = b.payment_provider;
     lang = b.user.lang || 'uz';
+    if (b.user.currency === 'UZS' || b.user.currency === 'RUB') { CUR = b.user.currency; try { localStorage.setItem(CUR_KEY, CUR); } catch (_) {} }
     document.documentElement.lang = lang;
+    if (!b.user.setup_done) { S.setup = { lang, cur: CUR }; S.stack = [{ name: 'setup' }]; }  // opened without the bot's questions
     $('#app').hidden = false;
     render();
   } catch (e) {

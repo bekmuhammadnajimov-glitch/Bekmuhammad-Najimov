@@ -57,6 +57,11 @@ async def init() -> None:
         ucols = {r["name"] for r in await cur.fetchall()}
     if "last_seen" not in ucols:
         await _db.execute("ALTER TABLE users ADD COLUMN last_seen INTEGER")
+    # first-run choices: language + payment currency; setup_done = 1 once the user has picked both
+    if "currency" not in ucols:
+        await _db.execute("ALTER TABLE users ADD COLUMN currency TEXT")
+    if "setup_done" not in ucols:
+        await _db.execute("ALTER TABLE users ADD COLUMN setup_done INTEGER NOT NULL DEFAULT 0")
     # amounts can now be in so'm or rubles: `amount` + `currency` replace `amount_uzs`
     if "amount_uzs" in cols:
         await _db.execute("ALTER TABLE orders RENAME COLUMN amount_uzs TO amount")

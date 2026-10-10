@@ -59,10 +59,23 @@ async def lifespan(app: FastAPI):
             click.bot_username = (await notify.bot.get_me()).username  # for Click's "return to the bot" link
         except Exception as e:
             log.warning("could not read the bot username: %s", e)
+        try:  # the "/" menu everyone sees, in the user's own Telegram language
+            for code, start_d, settings_d in (("ru", "Начать", "Язык и валюта"), ("uz", "Boshlash", "Til va valyuta")):
+                await notify.bot.set_my_commands(
+                    [BotCommand(command="start", description=start_d), BotCommand(command="settings", description=settings_d)],
+                    language_code=code,
+                )
+            await notify.bot.set_my_commands(
+                [BotCommand(command="start", description="Boshlash / Начать"), BotCommand(command="settings", description="Til va valyuta / Язык и валюта")]
+            )
+        except Exception as e:
+            log.warning("could not set the command menu: %s", e)
         for admin_id in ADMIN_IDS:  # the "/" command menu shows these only in the admin's own chat
             try:
                 await notify.bot.set_my_commands(
                     [
+                        BotCommand(command="start", description="Boshlash"),
+                        BotCommand(command="settings", description="Til va valyuta"),
                         BotCommand(command="admin", description="Admin panel"),
                         BotCommand(command="users", description="Foydalanuvchilar ro'yxati"),
                         BotCommand(command="count", description="Nechta odam bor"),

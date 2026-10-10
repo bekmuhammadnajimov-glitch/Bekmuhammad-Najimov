@@ -23,19 +23,32 @@ TEXT = {
         "welcome": "UC tanlang, ID kiriting, to'lang — qolganini biz bajaramiz.",
         "open": "🚀 Ochish",
         "admin": "💬 Admin",
+        "ask_currency": "💳 <b>To'lov valyutasini tanlang</b>\n\nSo'm — O'zbekiston kartalari uchun,\nrubl — Rossiya kartalari uchun.",
+        "prefs": "⚙️ Til: <b>{lang}</b> · Valyuta: <b>{cur}</b>\nO'zgartirish: /settings",
+        "lang_name": "O'zbekcha",
+        "cur_name": {"UZS": "so'm", "RUB": "rubl"},
     },
     "ru": {
         "fallback": "Чтобы сделать заказ, нажмите «Открыть», а по вопросам напишите админу 👇",
         "welcome": "Выберите UC, введите ID, оплатите — остальное мы сделаем сами.",
         "open": "🚀 Открыть",
         "admin": "💬 Админ",
+        "ask_currency": "💳 <b>Выберите валюту оплаты</b>\n\nСум — для карт Узбекистана,\nрубль — для карт России.",
+        "prefs": "⚙️ Язык: <b>{lang}</b> · Валюта: <b>{cur}</b>\nИзменить: /settings",
+        "lang_name": "Русский",
+        "cur_name": {"UZS": "сум", "RUB": "рубль"},
     },
 }
+ASK_LANGUAGE = "🌐 <b>Tilni tanlang / Выберите язык</b>"
+
+
+async def _user_row(tg_id: int) -> dict | None:
+    return await db.fetchone("SELECT * FROM users WHERE tg_id = ?", (tg_id,))
 
 
 async def _lang_of(message: Message) -> str:
     lang = "ru" if (message.from_user.language_code or "").startswith("ru") else "uz"
-    row = await db.fetchone("SELECT lang FROM users WHERE tg_id = ?", (message.from_user.id,))
+    row = await _user_row(message.from_user.id)
     return row["lang"] if row and row["lang"] else lang
 
 
@@ -49,18 +62,83 @@ def _main_kb(lang: str) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
 
 
-@dp.message(CommandStart())
-async def start(message: Message) -> None:
-    await db.touch_user(message.from_user)
-    lang = await _lang_of(message)
+def _lang_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🇺🇿 O'zbekcha", callback_data="ob:lang:uz"),
+                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="ob:lang:ru"),
+            ]
+        ]
+    )
+
+
+def _currency_kb(lang: str) -> InlineKeyboardMarkup:
+    names = TEXT[lang]["cur_name"]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=f"🇺🇿 {names['UZS'].capitalize()} (UZS)", callback_data="ob:cur:UZS"),
+                InlineKeyboardButton(text=f"🇷🇺 {names['RUB'].capitalize()} (RUB)", callback_data="ob:cur:RUB"),
+            ]
+        ]
+    )
+
+
+async def _ask_language(message: Message) -> None:
+    await message.answer(ASK_LANGUAGE, reply_markup=_lang_kb())
+
+
+async def _send_welcome(target: Message, user_row: dict) -> None:
+    """The normal start message (banner + Open/Admin buttons) in the user's language, with their saved choices."""
+    lang = user_row["lang"] or "uz"
     t = TEXT[lang]
-    kb = _main_kb(lang)
+    caption = f"{t['welcome']}\n\n" + t["prefs"].format(lang=t["lang_name"], cur=t["cur_name"].get(user_row["currency"] or "UZS", "so'm"))
     banner = WEBAPP_DIR / "assets" / f"banner_{lang}.png"
     if banner.exists():
-        await message.answer_photo(FSInputFile(banner), caption=t["welcome"], reply_markup=kb)
+        await target.answer_photo(FSInputFile(banner), caption=caption, reply_markup=_main_kb(lang))
     else:
-        await message.answer(t["welcome"], reply_markup=kb)
+        await target.answer(caption, reply_markup=_main_kb(lang))
 
+
+async def _onboard_or(message: Message, then) -> None:
+    """New users (language/currency not chosen yet) are asked first; everyone else goes straight on."""
+    await db.touch_user(message.from_user)
+    row = await _user_row(message.from_user.id)
+    if not row["setup_done"]:
+        return await _ask_language(message)
+    await then(message, row)
+
+
+@dp.message(CommandStart())
+async def start(message: Message) -> None:
+    await _onboard_or(message, _send_welcome)
+
+
+@dp.message(Command("settings"))
+async def settings(message: Message) -> None:
+    await db.touch_user(message.from_user)
+    await _ask_language(message)  # same two questions again: language, then currency
+
+
+@dp.callback_query(F.data.startswith("ob:"))
+async def onboarding_cb(cb: CallbackQuery) -> None:
+    await db.touch_user(cb.from_user)
+    _, kind, value = cb.data.split(":", 2)
+    if kind == "lang" and value in ("uz", "ru"):
+        await db.execute("UPDATE users SET lang = ? WHERE tg_id = ?", (value, cb.from_user.id))
+        await cb.message.edit_text(TEXT[value]["ask_currency"], reply_markup=_currency_kb(value))
+        return await cb.answer()
+    if kind == "cur" and value in ("UZS", "RUB"):
+        await db.execute("UPDATE users SET currency = ?, setup_done = 1 WHERE tg_id = ?", (value, cb.from_user.id))
+        row = await _user_row(cb.from_user.id)
+        try:
+            await cb.message.delete()
+        except Exception:
+            pass
+        await _send_welcome(cb.message, row)
+        return await cb.answer("✅")
+    await cb.answer()
 
 @dp.message(Command("id"))
 async def my_id(message: Message) -> None:
@@ -289,6 +367,8 @@ async def retry_order(cb: CallbackQuery) -> None:
 # unknown commands) in private chats with the same "Open" and "Admin" buttons.
 @dp.message(F.chat.type == "private")
 async def fallback(message: Message) -> None:
-    await db.touch_user(message.from_user)
-    lang = await _lang_of(message)
-    await message.answer(TEXT[lang]["fallback"], reply_markup=_main_kb(lang))
+    async def reply(msg: Message, row: dict) -> None:
+        lang = row["lang"] or "uz"
+        await msg.answer(TEXT[lang]["fallback"], reply_markup=_main_kb(lang))
+
+    await _onboard_or(message, reply)

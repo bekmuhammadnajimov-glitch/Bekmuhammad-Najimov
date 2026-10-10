@@ -483,3 +483,22 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 .brand-mark { border-radius: 50%; filter: drop-shadow(0 6px 12px rgba(0, 0, 0, .55)); }
 .splash-mark img { filter: drop-shadow(0 14px 28px rgba(255, 150, 40, .35)); }
 .splash-mark::before, .splash-mark::after { border-radius: 50%; inset: -14px; }
+
+/* first-run setup screen */
+.setup { padding-top: 18px; text-align: center; }
+.setup-logo { margin: 0 auto 16px; border-radius: 50%; filter: drop-shadow(0 12px 22px rgba(255, 150, 40, .35)); }
+.setup h1 { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
+.setup-sub { font-size: 13.5px; color: var(--muted); margin: 8px auto 4px; max-width: 290px; line-height: 1.55; font-weight: 500; }
+.setup .sec { justify-content: flex-start; text-align: left; margin-top: 24px; }
+.opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; text-align: left; }
+.opt { position: relative; display: flex; align-items: center; gap: 12px; padding: 16px 14px; border-radius: 18px; background: var(--card); border: 1.5px solid var(--line-strong); box-shadow: var(--shadow); transition: .2s; }
+.opt:active { transform: scale(.97); }
+.opt.on { border-color: var(--accent); background: linear-gradient(160deg, rgba(255, 138, 31, .2), var(--card) 70%); box-shadow: 0 0 0 3px rgba(255, 138, 31, .22), var(--shadow); }
+.obadge { flex: none; min-width: 42px; height: 42px; padding: 0 8px; border-radius: 13px; display: grid; place-items: center; font-size: 13px; font-weight: 800; background: rgba(111, 168, 255, .16); color: var(--info); }
+.opt.on .obadge { background: var(--accent-grad); color: var(--cta-text); }
+.otx { min-width: 0; flex: 1; }
+.otx b { display: block; font-size: 15px; font-weight: 800; }
+.otx small { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; font-weight: 500; }
+.ock { position: absolute; top: 9px; right: 9px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-grad); color: var(--cta-text); transform: scale(0); transition: transform .25s cubic-bezier(.3, 1.6, .5, 1); }
+.opt.on .ock { transform: scale(1); }
+.ock .ic { width: 12px; height: 12px; stroke-width: 3.2; }

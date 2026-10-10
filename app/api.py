@@ -161,6 +161,8 @@ async def bootstrap(user: dict = Depends(current_user)):
             "username": user["username"],
             "photo_url": user["photo_url"],
             "lang": user["lang"],
+            "currency": user["currency"],
+            "setup_done": bool(user["setup_done"]),
         },
         "stats": await _stats(user["tg_id"]),
         "games": [
@@ -184,6 +186,36 @@ async def set_lang(body: LangIn, user: dict = Depends(current_user)):
     if body.lang not in ("uz", "ru"):
         raise HTTPException(400, "bad_lang")
     await db.execute("UPDATE users SET lang = ? WHERE tg_id = ?", (body.lang, user["tg_id"]))
+    return {"ok": True}
+
+
+class CurrencyIn(BaseModel):
+    currency: str
+
+
+@router.post("/currency")
+async def set_currency(body: CurrencyIn, user: dict = Depends(current_user)):
+    if body.currency not in CURRENCIES:
+        raise HTTPException(400, "bad_currency")
+    await db.execute("UPDATE users SET currency = ? WHERE tg_id = ?", (body.currency, user["tg_id"]))
+    return {"ok": True}
+
+
+class SetupIn(BaseModel):
+    lang: str
+    currency: str
+
+
+@router.post("/setup")
+async def finish_setup(body: SetupIn, user: dict = Depends(current_user)):
+    """First-run screen of the Mini App: saves the language and the currency in one go."""
+    if body.lang not in ("uz", "ru"):
+        raise HTTPException(400, "bad_lang")
+    if body.currency not in CURRENCIES:
+        raise HTTPException(400, "bad_currency")
+    await db.execute(
+        "UPDATE users SET lang = ?, currency = ?, setup_done = 1 WHERE tg_id = ?", (body.lang, body.currency, user["tg_id"])
+    )
     return {"ok": True}
 
 
