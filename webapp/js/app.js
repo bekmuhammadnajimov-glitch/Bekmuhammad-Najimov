@@ -207,7 +207,7 @@ async function api(path, opts = {}) {
 const errText = (e) => {
   const map = {
     invalid_id: 'err_invalid_id', too_many_pending: 'err_pending', rate_limited: 'err_rate',
-    catalog_unavailable: 'err_catalog', validation_unavailable: 'err_validation', cannot_pay: 'err_state', cannot_cancel: 'err_state',
+    catalog_unavailable: 'err_catalog', validation_unavailable: 'err_validation', unavailable: 'err_unavailable', cannot_pay: 'err_state', cannot_cancel: 'err_state',
   };
   return t(map[e.code] || 'err_generic');
 };

@@ -5,6 +5,7 @@ import re
 import time
 import uuid
 from collections import defaultdict, deque
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
@@ -16,6 +17,7 @@ from .config import (
     CARD_RUB_NUMBER,
     CLICK_READY,
     CURRENCIES,
+    FULFILLMENT_MODE,
     INCOMING_SECRET,
     PAYMENT_TTL_MIN,
     PUBG_VALIDATE_CATEGORY,
@@ -49,6 +51,36 @@ def _rate_limit(tg_id: int, limit: int = 20, window: int = 60) -> None:
     if len(q) >= limit:
         raise HTTPException(429, "rate_limited")
     q.append(now)
+
+
+_wallet = {"at": 0.0, "balance": None, "alerted": 0.0}
+
+
+async def _wallet_covers(cost_usd) -> bool:
+    """Live mode: never take an order the supplier wallet could not pay for, counting orders that are already waiting."""
+    if FULFILLMENT_MODE != "live":
+        return True
+    now = time.time()
+    if now - _wallet["at"] > 30:
+        try:
+            _wallet["balance"] = Decimal(str((await fulfillment.supplier.balance())["balance"]))
+        except Exception:
+            _wallet["balance"] = None
+        _wallet["at"] = now
+    balance = _wallet["balance"]
+    waiting = await db.fetchall("SELECT cost_usd FROM orders WHERE status IN ('awaiting_payment', 'payment_review', 'paid')")
+    need = sum((Decimal(str(r["cost_usd"] or 0)) for r in waiting), Decimal(0)) + Decimal(str(cost_usd))
+    if balance is not None and balance >= need:
+        return True
+    if now - _wallet["alerted"] > 1800:  # the owner hears about it, but not on every attempt
+        _wallet["alerted"] = now
+        shown = "o'qib bo'lmadi" if balance is None else f"{balance}"
+        await notify.admin_event(
+            "wallet_low",
+            f"⚠️ <b>Yetkazib beruvchi hamyoni yetarli emas</b> ({fulfillment.supplier.name})\n"
+            f"Balans: {shown} USD · kerak: {need} USD\nBuyurtmalar to'xtatildi. Hamyonni to'ldiring.",
+        )
+    return False
 
 
 def _money(amount: int, currency: str) -> str:
@@ -337,6 +369,9 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
         order_items = [{"offer_id": pack["offer_id"], "name": pack["name"], "uc": pack["uc"], "qty": 1}]
         title, uc_total, price, cost_usd = pack["name"], pack["uc"], price_in(pack["cost_usd"], body.currency), pack["cost_usd"]
         first_offer = pack["offer_id"]
+
+    if not await _wallet_covers(cost_usd):
+        raise HTTPException(503, "unavailable")
 
     pid = body.player_id.strip()
     ok, nick, verified = await _validate(pid)  # the price and the ID are always checked server-side

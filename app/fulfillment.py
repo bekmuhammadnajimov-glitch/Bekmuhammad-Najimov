@@ -60,6 +60,8 @@ def start(order_id: str) -> None:
 
 async def resume() -> None:
     rows = await db.fetchall("SELECT id FROM orders WHERE status IN ('paid', 'processing')")
+    if rows:
+        log.warning("resuming %d paid/processing order(s) after a restart", len(rows))
     for r in rows:
         start(r["id"])
 
