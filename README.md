@@ -5,7 +5,7 @@ PUBG Mobile UC do'koni. Oqim: paket → Player ID (avtomatik tekshiruv) → to'l
 ## Tuzilma
 
 - `app/` — backend (FastAPI + aiogram + SQLite)
-  - `api.py` — Mini App API, `fulfillment.py` — buyurtmani FazerCards orqali bajarish
+  - `api.py` — Mini App API, `fulfillment.py` — buyurtmani yetkazib beruvchi orqali bajarish (`supplier.py` umumiy interfeys, `fazercards.py` va `wdg.py` ikkita ulagich)
   - `bot_handlers.py` — `/start`, `/admin`, chekni tasdiqlash/rad etish, qayta urinish
 - `webapp/` — Mini App (HTML/CSS/JS, build kerak emas), `webapp/assets/banner.png` — `/start` rasmi
 - `scripts/check_supplier.py` — FazerCards'ni faqat o'qish bilan tekshirish (pul sarflamaydi)
@@ -32,6 +32,7 @@ Bot menyu tugmasi va `/start` dagi "Ochish" tugmasi shu manzilga ulanadi.
 
 | O'zgaruvchi | Qiymat | Ma'nosi |
 |---|---|---|
+| `SUPPLIER` | `fazercards` (standart) / `wdg` | UC qaysi yetkazib beruvchidan olinadi. `wdg` uchun `WDG_API_KEY` va `WDG_PUBG_CATEGORY_ID` kerak (bot'da admin `/supplier` buyrug'i kategoriyalarni ko'rsatadi). WDG'da Player ID tekshiruvi yo'q: FazerCards kaliti bo'lsa va rejasi faol bo'lsa, ID shu orqali tekshiriladi, aks holda ID "tekshirilmagan" deb ogohlantirish bilan qabul qilinadi |
 | `FULFILLMENT_MODE` | `mock` | Supplier balansi sarflanmaydi, yetkazish simulyatsiya qilinadi |
 | | `live` | Haqiqiy FazerCards buyurtmalari (balans sarflanadi) |
 | `PAYMENT_PROVIDER` | `mock` | "Test to'lov" tugmasi to'lovni simulyatsiya qiladi |

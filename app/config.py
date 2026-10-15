@@ -27,6 +27,14 @@ FAZERCARDS_API_KEY = os.getenv("FAZERCARDS_API_KEY", "").strip()
 FAZERCARDS_BASE_URL = os.getenv("FAZERCARDS_BASE_URL", "https://api.fzr.cards/api/v2")
 FULFILLMENT_MODE = os.getenv("FULFILLMENT_MODE", "mock").strip().lower()  # mock | live
 
+# Which supplier sells us the UC: fazercards | wdg (WDG Zone, https://wdgzone.tech/docs/)
+SUPPLIER = os.getenv("SUPPLIER", "fazercards").strip().lower()
+if SUPPLIER not in ("fazercards", "wdg"):
+    raise RuntimeError(f"SUPPLIER must be fazercards or wdg, not {SUPPLIER!r}")
+WDG_API_KEY = os.getenv("WDG_API_KEY", "").strip()
+WDG_BASE_URL = os.getenv("WDG_BASE_URL", "https://wdgzone.tech/api/v1").strip().rstrip("/")
+WDG_PUBG_CATEGORY_ID = os.getenv("WDG_PUBG_CATEGORY_ID", "").strip()  # the WDG category holding PUBG Mobile UC by Player ID
+
 PUBG_ORDER_CATEGORY = "pubg_mobile_auto"
 PUBG_VALIDATE_CATEGORY = "pubg_mobile"
 

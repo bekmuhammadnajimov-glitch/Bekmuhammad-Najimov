@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 
 from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonWebApp, WebAppInfo
@@ -17,6 +18,9 @@ from .config import (
     DEV_MODE,
     FULFILLMENT_MODE,
     PAYMENT_PROVIDER,
+    SUPPLIER,
+    WDG_API_KEY,
+    WDG_PUBG_CATEGORY_ID,
     WEBAPP_DIR,
     WEBAPP_URL,
 )
@@ -34,8 +38,22 @@ async def _warm_catalog() -> None:
         log.warning("could not pre-load the catalog: %s", e)
 
 
+async def _log_supplier_report() -> None:
+    """Writes the supplier health report to the log at startup, so a deploy shows right away whether WDG is reachable."""
+    try:
+        for line in await fulfillment.supplier.probe():
+            log.info("supplier: %s", re.sub(r"<[^>]+>", "", line))
+    except Exception as e:
+        log.warning("supplier report failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if SUPPLIER == "wdg":
+        if not WDG_API_KEY:
+            raise RuntimeError("SUPPLIER=wdg requires WDG_API_KEY")
+        if not WDG_PUBG_CATEGORY_ID:
+            log.warning("SUPPLIER=wdg but WDG_PUBG_CATEGORY_ID is not set: the UC catalog stays empty until it is (see /supplier)")
     # Refuse unsafe combinations: with real supplier orders, nobody may be able to "pay" without paying.
     if FULFILLMENT_MODE == "live" and (PAYMENT_PROVIDER == "mock" or DEV_MODE):
         raise RuntimeError(
@@ -81,6 +99,7 @@ async def lifespan(app: FastAPI):
                         BotCommand(command="admin", description="Admin panel"),
                         BotCommand(command="users", description="Foydalanuvchilar ro'yxati"),
                         BotCommand(command="count", description="Nechta odam bor"),
+                        BotCommand(command="supplier", description="Yetkazib beruvchi holati"),
                         BotCommand(command="id", description="Mening Telegram ID'im"),
                     ],
                     scope=BotCommandScopeChat(chat_id=admin_id),
@@ -94,6 +113,7 @@ async def lifespan(app: FastAPI):
         log.warning("DEV_MODE is on: requests without Telegram initData are accepted. Never run like this in production.")
     await fulfillment.resume()
     warm = asyncio.create_task(_warm_catalog())
+    report = asyncio.create_task(_log_supplier_report()) if hasattr(fulfillment.supplier, "probe") else None  # noqa: F841
     try:
         yield
     finally:

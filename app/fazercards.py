@@ -2,15 +2,19 @@ import uuid
 
 import httpx
 
+from .supplier import SupplierError
 
-class FazerCardsError(Exception):
+
+class FazerCardsError(SupplierError):
     def __init__(self, status: int, body: dict | str):
-        super().__init__(f"FazerCards API error {status}: {body}")
-        self.status = status
-        self.body = body
+        super().__init__(status, body)
+        self.args = (f"FazerCards API error {status}: {body}",)
 
 
 class FazerCards:
+    name = "FazerCards"
+    poll_interval = 5
+
     def __init__(self, api_key: str, base_url: str = "https://api.fzr.cards/api/v2"):
         self._http = httpx.AsyncClient(
             base_url=base_url,

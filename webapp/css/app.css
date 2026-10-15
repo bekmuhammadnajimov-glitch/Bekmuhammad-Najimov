@@ -214,6 +214,8 @@ img { display: block; }
 .vcard.ok { background: rgba(46, 229, 157, .12); border: 1.5px solid rgba(46, 229, 157, .55); }
 .vcard.bad { background: rgba(255, 107, 129, .1); border: 1.5px solid rgba(255, 107, 129, .5); }
 .vcard.wait { background: rgba(111, 168, 255, .1); border: 1.5px solid rgba(111, 168, 255, .4); }
+.vcard.warn { background: rgba(255, 181, 46, .1); border: 1.5px solid rgba(255, 181, 46, .55); }
+.vcard.warn .badge { background: #ffb52e; color: #2b1a00; }
 .vcard .badge { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none; }
 .vcard.ok .badge { background: var(--ok); color: #062a1b; }
 .vcard.bad .badge { background: var(--err); color: #2b0711; }

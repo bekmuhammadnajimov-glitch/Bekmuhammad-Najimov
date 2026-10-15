@@ -7,12 +7,32 @@ import time
 import httpx
 
 from . import db, notify
-from .config import FAZERCARDS_API_KEY, FAZERCARDS_BASE_URL, FULFILLMENT_MODE, PUBG_ORDER_CATEGORY
-from .fazercards import FazerCards, FazerCardsError
+from .config import (
+    FAZERCARDS_API_KEY,
+    FAZERCARDS_BASE_URL,
+    FULFILLMENT_MODE,
+    PUBG_ORDER_CATEGORY,
+    SUPPLIER,
+    WDG_API_KEY,
+    WDG_BASE_URL,
+    WDG_PUBG_CATEGORY_ID,
+)
+from .fazercards import FazerCards
+from .supplier import SupplierError
+from .wdg import Wdg
 
 log = logging.getLogger("nexdonate.fulfillment")
 
-supplier = FazerCards(FAZERCARDS_API_KEY, FAZERCARDS_BASE_URL)
+
+def _make_supplier():
+    if SUPPLIER == "wdg":
+        # WDG has no Player-ID lookup: keep FazerCards for it when its key is configured (and its plan is active).
+        checker = FazerCards(FAZERCARDS_API_KEY, FAZERCARDS_BASE_URL) if FAZERCARDS_API_KEY else None
+        return Wdg(WDG_API_KEY, WDG_BASE_URL, WDG_PUBG_CATEGORY_ID, id_checker=checker)
+    return FazerCards(FAZERCARDS_API_KEY, FAZERCARDS_BASE_URL)
+
+
+supplier = _make_supplier()
 
 # In mock mode nothing is bought from the supplier: make that impossible to miss in the admin feed.
 _MOCK_TAG = "" if FULFILLMENT_MODE == "live" else "\n⚠️ <b>MOCK rejim: UC haqiqatda yuborilmadi</b> (FULFILLMENT_MODE=live qiling)"
@@ -20,6 +40,7 @@ _MOCK_TAG = "" if FULFILLMENT_MODE == "live" else "\n⚠️ <b>MOCK rejim: UC ha
 # The supplier docs only show processing/completed/created; the failure names are a best guess.
 _DONE = {"completed", "complete", "done", "success", "succeeded", "delivered"}
 _FAIL = {"failed", "fail", "error", "canceled", "cancelled", "refunded", "rejected"}
+_PENDING = {"", "created", "pending", "processing", "queued", "new", "waiting", "in_progress"}
 _POLL_EVERY = 5
 _POLL_LIMIT = 20 * 60
 
@@ -107,7 +128,7 @@ async def _create_unit(order: dict, n: int, offer_id: str, gen: int) -> str | No
                 key += f"-g{gen}"
             res = await supplier.create_order(PUBG_ORDER_CATEGORY, offer_id, order["player_id"], idempotency_key=key)
             return res["order"]["id"]
-        except FazerCardsError as e:
+        except SupplierError as e:
             last_error = str(e)
             if e.status < 500 and e.status != 429:
                 break
@@ -121,19 +142,23 @@ async def _create_unit(order: dict, n: int, offer_id: str, gen: int) -> str | No
 async def _wait_unit(order: dict, n: int, supplier_id: str) -> bool | None:
     """True = delivered, False = failed, None = still unfinished after the poll limit."""
     deadline = time.time() + _POLL_LIMIT
+    seen: set[str] = set()
     while time.time() < deadline:
         try:
             data = await supplier.get_order(supplier_id)
             status = str(data.get("order", data).get("status", "")).lower()
-        except (FazerCardsError, httpx.HTTPError) as e:
+        except (SupplierError, httpx.HTTPError) as e:
             log.warning("poll error for %s: %s", order["id"], e)
             status = ""
+        if status not in _DONE | _FAIL | _PENDING and status not in seen:
+            seen.add(status)  # a status name we have never seen: say so once, keep waiting
+            log.warning("order %s pack %s: unrecognised supplier status %r", order["id"], n + 1, status)
         if status in _DONE:
             return True
         if status in _FAIL:
             log.warning("order %s pack %s ended as %s", order["id"], n + 1, status)
             return False
-        await asyncio.sleep(_POLL_EVERY)
+        await asyncio.sleep(getattr(supplier, "poll_interval", _POLL_EVERY))
     return None
 
 

@@ -320,7 +320,7 @@ async def _panel_text() -> str:
     return (
         "🛠 <b>Admin panel</b>\n"
         f"Yetkazish: <code>{FULFILLMENT_MODE}</code> · to'lov: <code>{PAYMENT_PROVIDER}</code>\n"
-        f"FazerCards balans: <b>{supplier}</b>\n"
+        f"{fulfillment.supplier.name} balans: <b>{supplier}</b>\n"
         f"Foydalanuvchilar: <b>{users}</b>\n\n" + "\n".join(lines)
     )
 
@@ -460,6 +460,26 @@ async def count_cmd(message: Message) -> None:
         f"Oxirgi 7 kunda faol: <b>{active}</b>\n"
         f"Xarid qilganlar: <b>{buyers}</b>"
     )
+
+
+@dp.message(Command("supplier"), F.from_user.id.in_(ADMIN_IDS))
+async def supplier_cmd(message: Message, command: CommandObject) -> None:
+    """Admin only: is the supplier reachable, what is the balance, are the UC products readable. `/supplier 22` looks inside category 22."""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    category = (command.args or "").strip() or None
+    wait = await message.answer("⏳ Yetkazib beruvchi tekshirilmoqda…")
+    s = fulfillment.supplier
+    try:
+        if hasattr(s, "probe"):
+            lines = await s.probe(category)
+        else:
+            bal = await s.balance()
+            lines = [f"✅ {s.name}: balans <b>{bal.get('balance')} {bal.get('currency')}</b>"]
+    except Exception as e:
+        lines = [f"❌ {s.name}: {html.escape(str(e))[:300]}"]
+    await wait.edit_text(f"🔌 <b>{s.name}</b>\n\n" + "\n".join(lines)[:3800])
+
 
 @dp.callback_query(F.data.startswith("pay:"))
 async def payment_decision(cb: CallbackQuery) -> None:

@@ -385,10 +385,13 @@ const vboxHTML = () => {
   const co = S.co;
   if (co.vstate === 'checking') return `<div class="vcard wait"><div class="badge"><div class="spinner"></div></div><div class="msg">${t('checking')}</div></div>`;
   if (co.vstate === 'valid') return `<div class="vcard ok"><div class="badge">${ic('check')}</div><div><div class="small">${t('account_found')}</div><div class="big">${esc(co.nick || '—')}</div></div></div>`;
+  if (co.vstate === 'unverified') return `<div class="vcard warn"><div class="badge">${ic('alert')}</div><div class="msg">${t('id_unverified')}</div></div>`;
   if (co.vstate === 'invalid') return `<div class="vcard bad"><div class="badge">${ic('x')}</div><div class="msg">${t('id_not_found')}</div></div>`;
   if (co.vstate === 'error') return `<div class="vcard bad"><div class="badge">${ic('alert')}</div><div class="msg">${t('err_validation')} <button style="color:var(--info);font-weight:700;text-decoration:underline" data-act="revalidate">${t('retry')}</button></div></div>`;
   return '';
 };
+// 'unverified' = the supplier cannot look an ID up: the customer may continue, with a warning to double-check it
+const idOk = () => S.co.vstate === 'valid' || S.co.vstate === 'unverified';
 const fieldClass = () => ({ valid: 'ok', invalid: 'bad', error: 'bad' }[S.co.vstate] || '');
 const trailHTML = () => (S.co.vstate === 'checking' ? '<div class="spinner"></div>' : S.co.vstate === 'valid' ? `<span style="color:var(--ok)">${ic('check')}</span>` : '');
 
@@ -405,10 +408,10 @@ screens.id = () => {
     <span class="trail" id="trail">${trailHTML()}</span>
   </div>
   <div class="vbox" id="vbox">${vboxHTML()}</div>
-  ${saved.length ? `<div class="chips">${saved.map((s) => `<button class="chip" data-act="use-id" data-pid="${esc(s.player_id)}">${ic('id', 'sm')}${esc(s.nick || s.player_id)}<small>${esc(s.player_id)}</small></button>`).join('')}</div>` : ''}
+  ${saved.length ? `<div class="chips">${saved.map((s) => `<button class="chip" data-act="use-id" data-pid="${esc(s.player_id)}">${ic('id', 'sm')}${esc(s.nick || s.player_id)}${s.nick ? `<small>${esc(s.player_id)}</small>` : ''}</button>`).join('')}</div>` : ''}
   <button class="check ${co.save ? 'on' : ''}" id="savechk" data-act="toggle-save"><span class="box">${ic('check')}</span>${t('save_id')}</button>
   <details class="help"><summary>${ic('help', 'sm')}${t('where_id')}</summary><p>${t('where_id_a')}</p></details>
-  ${cta(money(priceOf(co.pack)), t('continue'), co.vstate !== 'valid', 'next')}`;
+  ${cta(money(priceOf(co.pack)), t('continue'), !idOk(), 'next')}`;
 };
 after.id = () => {
   const input = $('#pid');
@@ -427,7 +430,7 @@ function refreshIdUI() {
   f.className = 'field ' + fieldClass();
   $('#trail').innerHTML = trailHTML();
   $('#vbox').innerHTML = vboxHTML();
-  const b = $('#cta-btn'); if (b) b.disabled = S.co.vstate !== 'valid';
+  const b = $('#cta-btn'); if (b) b.disabled = !idOk();
 }
 
 function queueValidate() {
@@ -441,8 +444,8 @@ function queueValidate() {
     try {
       const r = await api('/validate', { method: 'POST', body: { game: 'pubg', player_id: pid } });
       if (seq !== S.vseq) return;
-      co.vstate = r.valid ? 'valid' : 'invalid'; co.nick = r.nick;
-      notice(r.valid ? 'success' : 'error');
+      co.vstate = !r.valid ? 'invalid' : r.verified === false ? 'unverified' : 'valid'; co.nick = r.nick;
+      notice(co.vstate === 'valid' ? 'success' : co.vstate === 'unverified' ? 'warning' : 'error');
     } catch (e) {
       if (seq !== S.vseq) return;
       co.vstate = e.code === 'rate_limited' ? 'idle' : 'error';
@@ -467,7 +470,7 @@ async function ensureOrder() {
 const summaryCard = (o) => `<div class="card sum-card">
   <div class="sum-row"><span>${t('product')}</span><b>${esc(orderTitle(o))}</b></div>
   ${breakdown(o.items) ? `<div class="sum-row"><span>${t('contents')}</span><b>${breakdown(o.items)}</b></div>` : ''}
-  <div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick || '—')}</b></div>
+  <div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick || o.player_id || '—')}</b></div>
   <div class="sum-row"><span>${t('player_id')}</span><b>${esc(o.player_id)}</b></div>
   <div class="sum-row total"><span>${t('to_pay')}</span><b>${money(o.amount, o.currency)}</b></div></div>`;
 
@@ -580,14 +583,14 @@ screens.order = () => {
   </div>
   <div class="oprod">
     <div class="oprod-art">${packArt({ section: o.uc ? 'uc' : sectionOf(o.offer_id || ''), uc: o.uc, offer_id: o.offer_id, items: o.items })}</div>
-    <div class="oprod-tx"><b>${esc(orderTitle(o))}</b><span>→ ${esc(o.nick || '—')}</span></div>
+    <div class="oprod-tx"><b>${esc(orderTitle(o))}</b><span>→ ${esc(o.nick || o.player_id || '—')}</span></div>
   </div>
   ${tl}
   <div class="card sum-card mt">
     <div class="sum-row"><span>${t('order_no')}</span><b>${o.code}</b></div>
     <div class="sum-row"><span>${t('product')}</span><b>${esc(orderTitle(o))}</b></div>
     ${breakdown(o.items) ? `<div class="sum-row"><span>${t('contents')}</span><b>${breakdown(o.items)}</b></div>` : ''}
-    <div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick || '—')}</b></div>
+    <div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick || o.player_id || '—')}</b></div>
     <div class="sum-row"><span>${t('player_id')}</span><b>${esc(o.player_id)}</b></div>
     <div class="sum-row"><span>${t('date')}</span><b>${when(o.created_at)}</b></div>
     <div class="sum-row total"><span>${t('amount')}</span><b>${money(o.amount, o.currency)}</b></div></div>
@@ -757,7 +760,7 @@ const actions = {
   },
   next: () => {
     if (cur().name === 'game' && S.co.pack) go('id');
-    else if (cur().name === 'id' && S.co.vstate === 'valid') go('pay');
+    else if (cur().name === 'id' && idOk()) go('pay');
   },
   'use-id': (el) => { S.co.pid = el.dataset.pid; const i = $('#pid'); i.value = S.co.pid; queueValidate(); haptic('light'); },
   revalidate: () => queueValidate(),

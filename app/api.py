@@ -22,8 +22,8 @@ from .config import (
     SUPPORT_USERNAME,
     provider_for,
 )
-from .fazercards import FazerCardsError
 from .pricing import price_in, pubg_packs, quote_uc, uc_options
+from .supplier import SupplierError
 
 router = APIRouter(prefix="/api")
 
@@ -261,17 +261,18 @@ class ValidateIn(BaseModel):
     player_id: str
 
 
-async def _validate(player_id: str) -> tuple[bool, str | None]:
+async def _validate(player_id: str) -> tuple[bool, str | None, bool]:
+    """(is it a real account, nickname, was it actually checked). Unchecked IDs only happen with a supplier that cannot look them up."""
     pid = player_id.strip()
     if not _ID_RE.fullmatch(pid):
-        return False, None
+        return False, None, True
     # The supplier's ID check intermittently answers 502, so retry a few times before giving up.
     res = None
     for attempt in range(4):
         try:
             res = await fulfillment.supplier.validate_player(PUBG_VALIDATE_CATEGORY, pid)
             break
-        except FazerCardsError as e:
+        except SupplierError as e:
             if e.status < 500:
                 raise HTTPException(503, "validation_unavailable")
         except Exception:
@@ -279,7 +280,7 @@ async def _validate(player_id: str) -> tuple[bool, str | None]:
         await asyncio.sleep(0.5 * (attempt + 1))
     if res is None:
         raise HTTPException(503, "validation_unavailable")
-    return bool(res.get("valid")), res.get("player_name")
+    return bool(res.get("valid")), res.get("player_name"), bool(res.get("verified", True))
 
 
 @router.post("/validate")
@@ -287,8 +288,8 @@ async def validate(body: ValidateIn, user: dict = Depends(current_user)):
     if body.game != "pubg":
         raise HTTPException(404, "not_found")
     _rate_limit(user["tg_id"])
-    ok, nick = await _validate(body.player_id)
-    return {"valid": ok, "nick": nick if ok else None}
+    ok, nick, verified = await _validate(body.player_id)
+    return {"valid": ok, "nick": nick if ok else None, "verified": verified}
 
 
 # ---------------------------------------------------------------- orders
@@ -338,7 +339,7 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
         first_offer = pack["offer_id"]
 
     pid = body.player_id.strip()
-    ok, nick = await _validate(pid)  # the price and the ID are always checked server-side
+    ok, nick, verified = await _validate(pid)  # the price and the ID are always checked server-side
     if not ok:
         raise HTTPException(422, "invalid_id")
 
@@ -364,7 +365,7 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
     await notify.admin_event(
         "order_created",
         f"🛒 <b>Yangi buyurtma</b> · {db.code(order_id)}\n{title} · {_money(price, body.currency)}\n"
-        f"ID: <code>{pid}</code> · {nick or '—'}\nTo'lov: botda kutilmoqda",
+        f"ID: <code>{pid}</code> · {nick or ('⚠️ ID tekshirilmagan' if not verified else '—')}\nTo'lov: botda kutilmoqda",
         order,
     )
     return _public(order)
