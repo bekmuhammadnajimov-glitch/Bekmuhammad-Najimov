@@ -135,8 +135,10 @@ class Wdg:
             return None  # sold out, or a voucher code rather than a top-up by Player ID
         name = str(p.get("name", ""))
         amounts = {int(re.sub(r"[.,]", "", m)) for m in _UC_RE.findall(name)}
+        if not amounts:
+            return None  # Prime, Elite Pass, WOW Coins...: not UC, and the category lists plenty of them
         if len(amounts) != 1:
-            log.warning("skipping product %r: cannot read one UC amount from the name", name)
+            log.warning("skipping product %r: more than one UC amount in the name", name)
             return None
         uc = amounts.pop()
         try:
