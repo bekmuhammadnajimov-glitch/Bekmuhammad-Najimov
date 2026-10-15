@@ -241,6 +241,13 @@ class Wdg:
             out += [f"· {html.escape(str(p.get('name')))[:60]} · ${p.get('price')}" for p in odd]
         return out
 
+    async def _compact(self, category_id) -> list[str]:
+        rows = await self._products(str(category_id))
+        good = sorted(self._best_by_uc(rows).items())
+        needs_id = ",".join(sorted({str(p.get("requires_player_id")) for p in rows})) or "-"
+        prices = " · ".join(f"{uc}=${cost:.3f}" for uc, (cost, _) in good) or "UC yo'q"
+        return [f"• <code>{category_id}</code>: {len(rows)} mahsulot, ID kerak={needs_id} · {prices}"]
+
     async def probe(self, category: str | None = None) -> list[str]:
         """Human-readable health report: can we reach WDG, what is the balance, where is PUBG, do its products parse.
 
@@ -266,10 +273,13 @@ class Wdg:
             ] or ["• topilmadi"]
         except Exception as e:
             out.append(f"⚠️ kategoriyalarni o'qib bo'lmadi: {html.escape(str(e))[:200]}")
-        targets = [category] if category else [self._category] if self._category else [c.get("id") for c in hits if not c.get("has_children")][:4]
+        if category or self._category:
+            targets, compact = [category or self._category], False
+        else:  # nothing chosen yet: one line per candidate so every PUBG category can be compared
+            targets, compact = [c.get("id") for c in hits if not c.get("has_children")][:12], True
         for cid in targets:
             try:
-                out += await self._summary(cid)
+                out += await (self._compact(cid) if compact else self._summary(cid))
             except Exception as e:
                 out.append(f"⚠️ kategoriya {cid} mahsulotlarini o'qib bo'lmadi: {html.escape(str(e))[:200]}")
         if not self._category:
