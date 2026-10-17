@@ -227,9 +227,58 @@ class Wdg:
         return {"order": {"status": str(data.get("status", "")).lower(), "raw": data}}
 
     # ------------------------------------------------------------------ diagnostics (/supplier)
-    async def _categories(self, parent_id=None) -> list[dict]:
+    async def _categories(self, parent_id=None, ctype: str = "topup") -> list[dict]:
         params = {"parent_id": parent_id} if parent_id is not None else None
-        return self._rows(await self._request("GET", "/catalog/topup/categories", params=params), "categories", "items")
+        return self._rows(await self._request("GET", f"/catalog/{ctype}/categories", params=params), "categories", "items")
+
+    async def discover(self, words: list[str]) -> list[str]:
+        """Searches the whole catalogue (top up, voucher, manual) for categories whose name contains one of `words`,
+        walks below them and summarises the products of every leaf. Used to find where a game or service lives."""
+        words = [w.strip() for w in words if w.strip()]
+        if not words:
+            return ["Qidiruv so'zi berilmagan"]
+        rx = re.compile("|".join(re.escape(w) for w in words), re.I)
+        out: list[str] = [f"🔎 Katalog qidiruvi: {html.escape(', '.join(words))}"]
+        for ctype in ("topup", "voucher", "manual"):
+            try:
+                roots = await self._categories(None, ctype)
+            except Exception as e:
+                out.append(f"⚠️ [{ctype}] o'qib bo'lmadi: {html.escape(str(e))[:160]}")
+                continue
+            hits = [c for c in roots if rx.search(str(c.get("name", "")))]
+            out.append(f"[{ctype}] {len(roots)} ta bosh kategoriya, mos kelgani: {len(hits)}")
+            path: dict = {c.get("id"): str(c.get("name")) for c in hits}
+            queue, leaves, calls = list(hits), [], 0
+            while queue:
+                c = queue.pop(0)
+                if c.get("has_children") and calls < 30:
+                    calls += 1
+                    try:
+                        kids = await self._categories(c.get("id"), ctype)
+                    except Exception:
+                        kids = []
+                    for k in kids:
+                        path[k.get("id")] = f"{path.get(c.get('id'), '?')} › {k.get('name')}"
+                    queue += kids
+                else:
+                    leaves.append(c)
+            for c in leaves[:25]:
+                cid = c.get("id")
+                try:
+                    rows = await self._products(str(cid)) if ctype == "topup" else await self._type_products(str(cid), ctype)
+                except Exception as e:
+                    out.append(f"• {ctype} {cid} {html.escape(path.get(cid, ''))}: ⚠️ {html.escape(str(e))[:120]}")
+                    continue
+                needs = ",".join(sorted({str(p.get("requires_player_id")) for p in rows})) or "-"
+                sample = " | ".join(f"{html.escape(str(p.get('name')))[:34]} ${p.get('price')}" for p in rows[:7])
+                out.append(f"• {ctype} <code>{cid}</code> {html.escape(path.get(cid, ''))}: {len(rows)} mahsulot, ID={needs}\n   {sample}")
+        return out
+
+    async def _type_products(self, category_id: str, ctype: str) -> list[dict]:
+        body = await self._request(
+            "GET", "/products", params={"category_id": category_id, "type": ctype, "limit": _PAGE, "page": 1}
+        )
+        return [r for r in self._rows(body, "items", "products") if "id" in r]
 
     async def _summary(self, category_id) -> list[str]:
         rows = await self._products(str(category_id))

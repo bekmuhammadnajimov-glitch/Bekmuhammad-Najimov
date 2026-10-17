@@ -467,7 +467,12 @@ async def supplier_cmd(message: Message, command: CommandObject) -> None:
     """Admin only: is the supplier reachable, what is the balance, are the UC products readable. `/supplier 22` looks inside category 22."""
     if message.from_user.id not in ADMIN_IDS:
         return
-    category = (command.args or "").strip() or None
+    args = (command.args or "").strip()
+    if args.lower().startswith("find ") and hasattr(fulfillment.supplier, "discover"):
+        wait = await message.answer("⏳ Katalog qidirilmoqda (1-2 daqiqa)…")
+        found = await fulfillment.supplier.discover(args[5:].split(","))
+        return await wait.edit_text("\n".join(found)[:3900])
+    category = args or None
     wait = await message.answer("⏳ Yetkazib beruvchi tekshirilmoqda…")
     s = fulfillment.supplier
     try:

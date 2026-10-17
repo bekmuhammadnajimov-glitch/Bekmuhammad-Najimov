@@ -20,6 +20,7 @@ from .config import (
     PAYMENT_PROVIDER,
     SUPPLIER,
     WDG_API_KEY,
+    WDG_DISCOVER,
     WDG_PUBG_CATEGORY_ID,
     WEBAPP_DIR,
     WEBAPP_URL,
@@ -43,6 +44,9 @@ async def _log_supplier_report() -> None:
     try:
         for line in await fulfillment.supplier.probe():
             log.info("supplier: %s", re.sub(r"<[^>]+>", "", line))
+        if WDG_DISCOVER and hasattr(fulfillment.supplier, "discover"):
+            for line in await fulfillment.supplier.discover(WDG_DISCOVER):
+                log.info("discover: %s", re.sub(r"<[^>]+>", "", line).replace("\n", " ¦ "))
     except Exception as e:
         log.warning("supplier report failed: %s", e)
 
