@@ -187,7 +187,7 @@ const saveRegion = (gid, r) => { try { const m = JSON.parse(localStorage.getItem
 
 /* ---------------------------------------------------------------- state */
 const S = {
-  user: null, stats: { orders: 0, spent: 0 }, games: [], savedIds: [], recent: [],
+  user: null, stats: { orders: 0, spent: 0 }, games: [], savedIds: [], lb: {}, lbPeriod: '',
   support: '', provider: 'mock', packs: null, ucOptions: [], bestUc: null,
   tab: 'uc', game: 'pubg', region: '', gpacks: null,
   stack: [{ name: 'home' }],
@@ -307,6 +307,26 @@ const liveCard = (g) => {
   return `<button class="game-live" data-act="open-game" data-game="${esc(g.id)}">${gameIcon(g.id, g.name)}<div class="gl-tx"><div class="gl-name">${esc(g.name)}</div><div class="gl-from">${from ? t('from_price', { price: `<b>${money(from)}</b>` }) : t('top_up')}</div></div></button>`;
 };
 
+/* ---- top donors: the ten customers with the most purchases, one list per period ---- */
+const LB_KEYS = ['week', 'month', '3m', '6m', 'year'];
+// until the customer picks one, the first period that has somebody in it (a quiet week should not hide a busy month)
+const lbPeriod = () => S.lbPeriod || LB_KEYS.find((k) => (S.lb[k] || []).length) || LB_KEYS[0];
+const lbRow = (r, i) => {
+  const name = r.name || t('lb_anon');
+  return `<div class="lb-row r${i + 1}${r.me ? ' me' : ''}">
+    <span class="lb-rank">${i + 1}</span>
+    <span class="lb-av">${esc(name[0].toUpperCase())}${r.photo_url ? `<img src="${esc(r.photo_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span>
+    <span class="lb-mid"><b>${esc(name)}${r.me ? ` <i>${t('lb_me')}</i>` : ''}</b><small>${t('lb_orders', { n: r.orders })}</small></span>
+    <span class="lb-sum">${money(priceOf(r))}</span></div>`;
+};
+const lbBody = () => {
+  const rows = S.lb[lbPeriod()] || [];
+  return rows.length ? rows.map(lbRow).join('') : `<div class="lb-empty">${t('lb_empty')}</div>`;
+};
+const lbSection = () => `<h2 class="sec"><span>${t('lb_title')}</span></h2>
+  <div class="tabs lb-tabs">${LB_KEYS.map((k) => `<button class="tabchip ${k === lbPeriod() ? 'on' : ''}" data-act="lb-period" data-period="${k}">${t('lb_' + k)}</button>`).join('')}</div>
+  <div class="lb" id="lb">${lbBody()}</div>`;
+
 screens.home = () => {
   const name = esc(S.user.first_name || '');
   const pubg = S.games.find((g) => g.id === 'pubg');
@@ -347,7 +367,7 @@ screens.home = () => {
   ${live.length ? `<div class="games-live">${live.map(liveCard).join('')}</div>` : ''}
   <div class="games-soon">${soon.slice(0, 18).map((g) => `<div class="game-soon">${gameIcon(g.id, g.name)}<div class="name">${esc(g.name)}</div><span class="pill">${t('soon')}</span></div>`).join('')}</div>
 
-  ${S.recent.length ? `<h2 class="sec"><span>${t('recent')}</span><button class="link" data-act="tab" data-tab="orders">${t('all')}</button></h2>${S.recent.map(orderRow).join('')}` : ''}`;
+  ${lbSection()}`;
 };
 
 /* ----- step 1: pick a product ----- */
@@ -924,6 +944,11 @@ const actions = {
     syncCta();
   },
   'set-tab': (el) => { S.tab = el.dataset.sec; haptic('light'); renderPacks(); },
+  'lb-period': (el) => {
+    S.lbPeriod = el.dataset.period; haptic('light');
+    document.querySelectorAll('.lb-tabs .tabchip').forEach((b) => b.classList.toggle('on', b === el)); // the chips stay where they are scrolled to
+    const list = $('#lb'); if (list) list.innerHTML = lbBody();
+  },
   'set-cur': (el) => {
     const c = el.dataset.cur === 'RUB' ? 'RUB' : 'UZS';
     if (c === CUR) return;
@@ -1006,6 +1031,9 @@ const actions = {
   },
 };
 
+// a profile picture that does not load leaves the initial underneath
+document.addEventListener('error', (e) => { if (e.target.matches && e.target.matches('.lb-av img')) e.target.remove(); }, true);
+
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
   if (el && actions[el.dataset.act]) actions[el.dataset.act](el, e);
@@ -1015,7 +1043,7 @@ document.addEventListener('click', (e) => {
 async function refreshBoot() {
   try {
     const b = await api('/bootstrap');
-    S.stats = b.stats; S.recent = b.recent_orders; S.savedIds = b.saved_ids; S.games = b.games;
+    S.stats = b.stats; S.lb = b.leaderboard; S.savedIds = b.saved_ids; S.games = b.games;
   } catch (_) {}
 }
 
@@ -1028,7 +1056,7 @@ async function boot() {
   }
   try {
     const b = await api('/bootstrap');
-    S.user = b.user; S.stats = b.stats; S.games = b.games; S.savedIds = b.saved_ids; S.recent = b.recent_orders;
+    S.user = b.user; S.stats = b.stats; S.games = b.games; S.savedIds = b.saved_ids; S.lb = b.leaderboard;
     S.support = b.support_username; S.provider = b.payment_provider;
     lang = b.user.lang || 'uz';
     if (b.user.currency === 'UZS' || b.user.currency === 'RUB') { CUR = b.user.currency; try { localStorage.setItem(CUR_KEY, CUR); } catch (_) {} }

@@ -25,7 +25,7 @@ from .config import (
     provider_for,
 )
 from .games import REGISTRY
-from .pricing import game_packs, peek_game_packs, price_in, pubg_packs, quote_uc, uc_options
+from .pricing import game_packs, peek_game_packs, price_in, pubg_packs, quote_uc, rub_price, uc_options, uzs_price
 from .supplier import SupplierError
 
 router = APIRouter(prefix="/api")
@@ -211,6 +211,46 @@ async def _stats(tg_id: int) -> dict:
     return {"orders": sum(r["n"] for r in rows), "spent": spent}
 
 
+# ---------------------------------------------------------------- top donors
+_LB_DAYS = {"week": 7, "month": 30, "3m": 90, "6m": 182, "year": 365}
+_lb: dict = {"at": 0.0, "rows": {}}
+
+
+def _lb_name(row: dict) -> str:
+    """First name and the first letter of the last one: a customer's full name is not for everybody to read."""
+    first, last = (row["first_name"] or "").strip(), (row["last_name"] or "").strip()
+    return f"{first} {last[0]}." if first and last else first
+
+
+async def _leaderboard(tg_id: int) -> dict:
+    """The ten customers with the most completed purchases in each period (ranked by what the orders cost us, so
+    so'm and ruble customers compare), shown in both currencies at our prices. One minute cache, shared by everybody."""
+    if time.time() - _lb["at"] > 60:
+        now = db.now()
+        _lb["rows"] = {
+            key: await db.fetchall(
+                """SELECT o.tg_id, SUM(CAST(o.cost_usd AS REAL)) AS usd, COUNT(*) AS n,
+                          u.first_name, u.last_name, u.photo_url
+                   FROM orders o LEFT JOIN users u ON u.tg_id = o.tg_id
+                   WHERE o.status = 'completed' AND o.created_at >= ?
+                   GROUP BY o.tg_id HAVING usd > 0 ORDER BY usd DESC, n DESC, o.tg_id LIMIT 10""",
+                (now - days * 86400,),
+            )
+            for key, days in _LB_DAYS.items()
+        }
+        _lb["at"] = time.time()
+    return {
+        key: [
+            {
+                "name": _lb_name(r), "photo_url": r["photo_url"], "orders": r["n"],
+                "price": uzs_price(str(r["usd"])), "price_rub": rub_price(str(r["usd"])), "me": r["tg_id"] == tg_id,
+            }
+            for r in rows
+        ]
+        for key, rows in _lb["rows"].items()
+    }
+
+
 # ---------------------------------------------------------------- bootstrap
 @router.get("/bootstrap")
 async def bootstrap(user: dict = Depends(current_user)):
@@ -227,9 +267,6 @@ async def bootstrap(user: dict = Depends(current_user)):
     ids = await db.fetchall(
         "SELECT id, game, player_id, nick FROM saved_ids WHERE tg_id = ? ORDER BY id DESC", (user["tg_id"],)
     )
-    recent = await db.fetchall(
-        "SELECT * FROM orders WHERE tg_id = ? ORDER BY created_at DESC LIMIT 3", (user["tg_id"],)
-    )
     return {
         "user": {
             "id": user["tg_id"],
@@ -244,7 +281,7 @@ async def bootstrap(user: dict = Depends(current_user)):
         "stats": await _stats(user["tg_id"]),
         "games": _games_view(from_price, from_price_rub),
         "saved_ids": ids,
-        "recent_orders": [_public(o) for o in recent],
+        "leaderboard": await _leaderboard(user["tg_id"]),
         "support_username": SUPPORT_USERNAME,
         "payment_provider": {c: provider_for(c) for c in CURRENCIES},
     }
