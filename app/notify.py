@@ -8,6 +8,7 @@ from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarku
 
 from . import db
 from .config import ADMIN_IDS, BOT_TOKEN, BOT_USERNAME
+from .games import REGISTRY
 
 log = logging.getLogger("nexdonate.notify")
 bot_username: str | None = BOT_USERNAME or None  # filled at startup; builds the t.me/<bot>?start=pay_<order> links
@@ -15,6 +16,25 @@ bot_username: str | None = BOT_USERNAME or None  # filled at startup; builds the
 bot: Bot | None = (
     Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) if BOT_TOKEN else None
 )
+
+def recipient(order: dict) -> str:
+    """Who the order is for, as HTML: @username for Telegram Stars/Premium, "Nick (ID)" or just the ID for games."""
+    pid = html.escape(order["player_id"])
+    g = REGISTRY.get(order.get("game"))
+    if g and g.recipient == "username":
+        return f"@{pid}"
+    nick = order.get("nick")
+    return f"{html.escape(nick)} (<code>{pid}</code>)" if nick else f"<code>{pid}</code>"
+
+
+def recipient_line(order: dict, lang: str) -> str:
+    """The "who is it for" line of a message, labelled for the game: Telegram, Account or Player ID."""
+    g = REGISTRY.get(order.get("game"))
+    if g and g.recipient == "username":
+        return f"Telegram: <b>{recipient(order)}</b>"
+    label = {"uz": "Akkaunt", "ru": "Аккаунт"}[lang] if order.get("nick") else "Player ID"
+    return f"{label}: <b>{recipient(order)}</b>"
+
 
 MSG = {
     "payment_confirmed": {
@@ -26,8 +46,8 @@ MSG = {
         "ru": "⚠️ <b>Чек не принят</b>\nОплата заказа <code>{code}</code> не подтверждена. Отправьте корректный скриншот чека сюда ещё раз или напишите админу.",
     },
     "completed": {
-        "uz": "✅ <b>Buyurtma yetkazildi!</b>\n{title} → <b>{nick}</b> (<code>{pid}</code>)\nBuyurtma <code>{code}</code>\n\nO'yindan zavqlaning! 🎮",
-        "ru": "✅ <b>Заказ доставлен!</b>\n{title} → <b>{nick}</b> (<code>{pid}</code>)\nЗаказ <code>{code}</code>\n\nПриятной игры! 🎮",
+        "uz": "✅ <b>Buyurtma yetkazildi!</b>\n{title} → <b>{who}</b>\nBuyurtma <code>{code}</code>\n\nXaridingiz uchun rahmat! 🙌",
+        "ru": "✅ <b>Заказ доставлен!</b>\n{title} → <b>{who}</b>\nЗаказ <code>{code}</code>\n\nСпасибо за покупку! 🙌",
     },
     "failed": {
         "uz": "❗️ <b>Buyurtma bajarilmadi</b>\nBuyurtma <code>{code}</code> bo'yicha texnik muammo yuz berdi. Administrator buni ko'rib chiqadi — iltimos, qo'llab-quvvatlashga yozing.",
@@ -48,8 +68,7 @@ async def send_user(order: dict, key: str) -> None:
     text = MSG[key][lang].format(
         code=db.code(order["id"]),
         title=html.escape(order.get("offer_name") or ""),
-        nick=html.escape(order.get("nick") or "—"),
-        pid=html.escape(order["player_id"]),
+        who=recipient(order),
     )
     try:
         await bot.send_message(order["tg_id"], text)
@@ -62,7 +81,7 @@ def _admin_order_text(order: dict, title: str) -> str:
         f"{title}\n"
         f"<b>{db.code(order['id'])}</b>\n"
         f"Mahsulot: <b>{html.escape(order.get('offer_name') or '')}</b>\n"
-        f"ID: <code>{html.escape(order['player_id'])}</code> · {html.escape(order.get('nick') or '—')}\n"
+        f"{recipient_line(order, 'uz')}\n"
         f"Summa: <b>{order['amount']:,}</b> {'₽' if order.get('currency') == 'RUB' else 'so' + chr(39) + 'm'}".replace(",", " ")
         + f"\nMijoz: <code>{order['tg_id']}</code>"
     )

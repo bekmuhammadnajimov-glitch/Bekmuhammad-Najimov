@@ -1,4 +1,4 @@
-"""Turns a paid order into delivered UC: places the supplier order and polls it to completion."""
+"""Turns a paid order into a delivered one (UC, Stars, diamonds...): places the supplier order and polls it to completion."""
 import asyncio
 import json
 import logging
@@ -35,7 +35,7 @@ def _make_supplier():
 supplier = _make_supplier()
 
 # In mock mode nothing is bought from the supplier: make that impossible to miss in the admin feed.
-_MOCK_TAG = "" if FULFILLMENT_MODE == "live" else "\n⚠️ <b>MOCK rejim: UC haqiqatda yuborilmadi</b> (FULFILLMENT_MODE=live qiling)"
+_MOCK_TAG = "" if FULFILLMENT_MODE == "live" else "\n⚠️ <b>MOCK rejim: haqiqatda yuborilmadi</b> (FULFILLMENT_MODE=live qiling)"
 
 # The supplier docs only show processing/completed/created; the failure names are a best guess.
 _DONE = {"completed", "complete", "done", "success", "succeeded", "delivered"}
@@ -72,7 +72,7 @@ async def _run(order_id: str) -> None:
         if not order or order["status"] not in ("paid", "processing"):
             return
         await db.update_order(order_id, status="processing", error=None)
-        await notify.admin_event("delivery", f"⚙️ <b>UC yuborilmoqda</b> · {db.code(order_id)} · {order['offer_name']} → {order['nick'] or order['player_id']}{_MOCK_TAG}", order)
+        await notify.admin_event("delivery", f"⚙️ <b>Yuborilmoqda</b> · {db.code(order_id)} · {order['offer_name']} → {notify.recipient(order)}{_MOCK_TAG}", order)
         if FULFILLMENT_MODE == "live":
             await _live(order)
         else:
@@ -194,7 +194,7 @@ async def _complete(order: dict, supplier_id: str | None) -> None:
         fields["supplier_order_id"] = supplier_id
     await db.update_order(order["id"], **fields)
     await notify.send_user(order, "completed")
-    await notify.admin_event("completed", f"🎉 <b>Buyurtma yetkazildi</b> · {db.code(order['id'])} · {order['offer_name']} → {order['nick'] or order['player_id']}{_MOCK_TAG}", order)
+    await notify.admin_event("completed", f"🎉 <b>Buyurtma yetkazildi</b> · {db.code(order['id'])} · {order['offer_name']} → {notify.recipient(order)}{_MOCK_TAG}", order)
 
 
 async def _fail(order: dict, reason: str) -> None:

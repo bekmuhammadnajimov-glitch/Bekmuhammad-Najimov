@@ -37,7 +37,7 @@ TEXT = {
         "fallback": "Buyurtma berish uchun «Ochish» tugmasini bosing, savol bo'lsa admin bilan bog'laning 👇",
         "welcome": "Paketni tanlang, ID kiriting, to'lang — qolganini biz bajaramiz.",
         "cancel_btn": "❌ Bekor qilish",
-        "pay_instr": "💳 <b>To'lov</b> · <code>{code}</code>\n\nMahsulot: <b>{title}</b>\nAkkaunt: <b>{nick}</b> (<code>{pid}</code>)\n\nTo'lov summasi: <b>{amount}</b>\n❗️ <b>Aynan shu summani</b> o'tkazing.\n\nKarta raqami (bosib nusxalang):\n<code>{card}</code>\n{card_info}\n⏳ {minutes} daqiqa ichida to'lang.\nTo'lagach <b>chek skrinshotini</b> shu chatga yuboring 👇",
+        "pay_instr": "💳 <b>To'lov</b> · <code>{code}</code>\n\nMahsulot: <b>{title}</b>\n{recipient_line}\n\nTo'lov summasi: <b>{amount}</b>\n❗️ <b>Aynan shu summani</b> o'tkazing.\n\nKarta raqami (bosib nusxalang):\n<code>{card}</code>\n{card_info}\n⏳ {minutes} daqiqa ichida to'lang.\nTo'lagach <b>chek skrinshotini</b> shu chatga yuboring 👇",
         "pay_no_card": "Kechirasiz, bu valyutada to'lov hozircha ulanmagan. /settings orqali boshqa valyutani tanlang yoki admin bilan bog'laning.",
         "pay_expired": "⌛️ Bu buyurtmaning to'lov muddati tugagan. Ilovada yangi buyurtma bering 👇",
         "pay_done": "Bu buyurtma allaqachon to'langan yoki bekor qilingan.",
@@ -57,7 +57,7 @@ TEXT = {
         "fallback": "Чтобы сделать заказ, нажмите «Открыть», а по вопросам напишите админу 👇",
         "welcome": "Выберите пакет, введите ID, оплатите — остальное мы сделаем сами.",
         "cancel_btn": "❌ Отменить",
-        "pay_instr": "💳 <b>Оплата</b> · <code>{code}</code>\n\nТовар: <b>{title}</b>\nАккаунт: <b>{nick}</b> (<code>{pid}</code>)\n\nСумма к оплате: <b>{amount}</b>\n❗️ Переведите <b>ровно эту сумму</b>.\n\nНомер карты (нажмите, чтобы скопировать):\n<code>{card}</code>\n{card_info}\n⏳ Оплатите в течение {minutes} минут.\nПосле оплаты отправьте <b>скриншот чека</b> в этот чат 👇",
+        "pay_instr": "💳 <b>Оплата</b> · <code>{code}</code>\n\nТовар: <b>{title}</b>\n{recipient_line}\n\nСумма к оплате: <b>{amount}</b>\n❗️ Переведите <b>ровно эту сумму</b>.\n\nНомер карты (нажмите, чтобы скопировать):\n<code>{card}</code>\n{card_info}\n⏳ Оплатите в течение {minutes} минут.\nПосле оплаты отправьте <b>скриншот чека</b> в этот чат 👇",
         "pay_no_card": "Извините, оплата в этой валюте пока не подключена. Выберите другую валюту через /settings или напишите админу.",
         "pay_expired": "⌛️ Время оплаты этого заказа истекло. Оформите новый заказ в приложении 👇",
         "pay_done": "Этот заказ уже оплачен или отменён.",
@@ -221,8 +221,8 @@ async def _show_payment(message: Message, order_id: str) -> None:
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t["cancel_btn"], callback_data=f"ord:cancel:{order_id}")]])
     await message.answer(
         t["pay_instr"].format(
-            code=db.code(order_id), title=html.escape(order["offer_name"] or ""), nick=html.escape(order["nick"] or "—"),
-            pid=html.escape(order["player_id"]), amount=_money(order["amount"], order["currency"]), card=html.escape(card),
+            code=db.code(order_id), title=html.escape(order["offer_name"] or ""), recipient_line=notify.recipient_line(order, lang),
+            amount=_money(order["amount"], order["currency"]), card=html.escape(card),
             card_info=(html.escape(card_info) + "\n") if card_info else "", minutes=PAYMENT_TTL_MIN,
         ),
         reply_markup=kb,

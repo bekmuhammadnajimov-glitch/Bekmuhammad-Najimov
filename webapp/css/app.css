@@ -129,6 +129,9 @@ img { display: block; }
 
 /* ---------- game icons ---------- */
 .gicon { object-fit: cover; background: var(--card-2); }
+/* Telegram's own stars have no plate: just the star on the card */
+img.gicon[src*="/tg_"] { background: none; box-shadow: none; border-radius: 0; object-fit: contain; filter: drop-shadow(0 6px 8px rgba(0, 0, 0, .45)); }
+.game-live img.gicon[src*="/tg_"] { width: 62px; height: 62px; margin: -8px -6px -8px -8px; }
 .game-featured { display: flex; align-items: center; gap: 14px; padding: 14px; width: 100%; text-align: left; transition: transform .15s; border-color: rgba(255, 138, 31, .55); }
 .game-featured:active { transform: scale(.985); }
 .game-featured .gicon { width: 72px; height: 72px; border-radius: 18px; box-shadow: 0 8px 18px -6px rgba(0, 0, 0, .6); }
