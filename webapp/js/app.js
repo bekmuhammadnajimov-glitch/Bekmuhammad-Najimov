@@ -150,7 +150,7 @@ const S = {
   stack: [{ name: 'home' }],
   co: null, vseq: 0, vtimer: null, timer: null, viewOrder: null, ordersList: null,
 };
-const freshCo = () => ({ pack: null, pid: '', nick: null, vstate: 'idle', save: true, order: null, orderKey: null, receipt: null, busy: false });
+const freshCo = () => ({ pack: null, pid: '', confirm: '', nick: null, vstate: 'idle', save: true, order: null, orderKey: null, receipt: null, busy: false });
 S.co = freshCo();
 
 const TABS = ['home', 'orders', 'support', 'profile'];
@@ -207,7 +207,7 @@ async function api(path, opts = {}) {
 const errText = (e) => {
   const map = {
     invalid_id: 'err_invalid_id', too_many_pending: 'err_pending', rate_limited: 'err_rate',
-    catalog_unavailable: 'err_catalog', validation_unavailable: 'err_validation', unavailable: 'err_unavailable', cannot_pay: 'err_state', cannot_cancel: 'err_state',
+    catalog_unavailable: 'err_catalog', validation_unavailable: 'err_validation', unavailable: 'err_unavailable', id_mismatch: 'id_mismatch', cannot_pay: 'err_state', cannot_cancel: 'err_state',
   };
   return t(map[e.code] || 'err_generic');
 };
@@ -385,13 +385,44 @@ const vboxHTML = () => {
   const co = S.co;
   if (co.vstate === 'checking') return `<div class="vcard wait"><div class="badge"><div class="spinner"></div></div><div class="msg">${t('checking')}</div></div>`;
   if (co.vstate === 'valid') return `<div class="vcard ok"><div class="badge">${ic('check')}</div><div><div class="small">${t('account_found')}</div><div class="big">${esc(co.nick || '—')}</div></div></div>`;
-  if (co.vstate === 'unverified') return `<div class="vcard warn"><div class="badge">${ic('alert')}</div><div class="msg">${t('id_unverified')}</div></div>`;
   if (co.vstate === 'invalid') return `<div class="vcard bad"><div class="badge">${ic('x')}</div><div class="msg">${t('id_not_found')}</div></div>`;
   if (co.vstate === 'error') return `<div class="vcard bad"><div class="badge">${ic('alert')}</div><div class="msg">${t('err_validation')} <button style="color:var(--info);font-weight:700;text-decoration:underline" data-act="revalidate">${t('retry')}</button></div></div>`;
   return '';
 };
-// 'unverified' = the supplier cannot look an ID up: the customer may continue, with a warning to double-check it
-const idOk = () => S.co.vstate === 'valid' || S.co.vstate === 'unverified';
+// 'unverified' = the supplier cannot look an ID up. Then the customer types the ID a second time and both must match.
+const idOk = () => S.co.vstate === 'valid' || (S.co.vstate === 'unverified' && S.co.confirm === S.co.pid);
+const confirmState = () => {
+  const { pid, confirm } = S.co;
+  if (!confirm) return 'empty';
+  if (confirm === pid) return 'match';
+  return pid.startsWith(confirm) ? 'typing' : 'mismatch'; // a shorter prefix is just not finished yet
+};
+const confirmHint = () => ({
+  empty: t('id_confirm_hint'), typing: t('id_confirm_hint'),
+  match: `<span style="color:var(--ok)">${t('id_match')}</span>`, mismatch: `<span style="color:var(--err)">${t('id_mismatch')}</span>`,
+}[confirmState()]);
+const confirmClass = () => ({ match: 'ok', mismatch: 'bad' }[confirmState()] || '');
+const confirmTrail = () => (confirmState() === 'match' ? `<span style="color:var(--ok)">${ic('check')}</span>` : '');
+const cboxHTML = () => (S.co.vstate !== 'unverified' ? '' : `
+  <label class="field-label" for="cpid">${t('id_confirm_label')}</label>
+  <div class="field ${confirmClass()}" id="cfield">
+    <span class="lead">${ic('id')}</span>
+    <input id="cpid" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="${t('id_placeholder')}" value="${esc(S.co.confirm)}">
+    <span class="trail" id="ctrail">${confirmTrail()}</span>
+  </div>
+  <div class="chint" id="chint">${confirmHint()}</div>`);
+function bindConfirm() {
+  const c = $('#cpid'); if (!c) return;
+  c.addEventListener('input', () => {
+    const v = c.value.replace(/\D/g, '').slice(0, 14);
+    c.value = v; S.co.confirm = v;
+    $('#cfield').className = 'field ' + confirmClass();
+    $('#ctrail').innerHTML = confirmTrail();
+    $('#chint').innerHTML = confirmHint();
+    const b = $('#cta-btn'); if (b) b.disabled = !idOk();
+    if (confirmState() === 'match') notice('success');
+  });
+}
 const fieldClass = () => ({ valid: 'ok', invalid: 'bad', error: 'bad' }[S.co.vstate] || '');
 const trailHTML = () => (S.co.vstate === 'checking' ? '<div class="spinner"></div>' : S.co.vstate === 'valid' ? `<span style="color:var(--ok)">${ic('check')}</span>` : '');
 
@@ -407,7 +438,8 @@ screens.id = () => {
     <input id="pid" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="${t('id_placeholder')}" value="${esc(co.pid)}">
     <span class="trail" id="trail">${trailHTML()}</span>
   </div>
-  <div class="vbox" id="vbox">${vboxHTML()}</div>
+  <div class="vbox ${co.vstate === 'unverified' ? 'slim' : ''}" id="vbox">${vboxHTML()}</div>
+  <div id="cbox">${cboxHTML()}</div>
   ${saved.length ? `<div class="chips">${saved.map((s) => `<button class="chip" data-act="use-id" data-pid="${esc(s.player_id)}">${ic('id', 'sm')}${esc(s.nick || s.player_id)}${s.nick ? `<small>${esc(s.player_id)}</small>` : ''}</button>`).join('')}</div>` : ''}
   <button class="check ${co.save ? 'on' : ''}" id="savechk" data-act="toggle-save"><span class="box">${ic('check')}</span>${t('save_id')}</button>
   <details class="help"><summary>${ic('help', 'sm')}${t('where_id')}</summary><p>${t('where_id_a')}</p></details>
@@ -421,6 +453,7 @@ after.id = () => {
     S.co.pid = v; S.co.nick = null;
     queueValidate();
   });
+  bindConfirm();
   if (!S.co.pid) setTimeout(() => input.focus(), 350);
   else if (S.co.vstate === 'idle') queueValidate();
 };
@@ -430,6 +463,16 @@ function refreshIdUI() {
   f.className = 'field ' + fieldClass();
   $('#trail').innerHTML = trailHTML();
   $('#vbox').innerHTML = vboxHTML();
+  $('#vbox').classList.toggle('slim', S.co.vstate === 'unverified');
+  const cb = $('#cbox');
+  if (cb) {
+    // keep the second field alive (and focused) while the first one is being re-checked, so typing is not interrupted
+    const want = S.co.vstate === 'unverified' || (S.co.vstate === 'checking' && $('#cpid'));
+    if (want && !$('#cpid')) {
+      cb.innerHTML = cboxHTML(); bindConfirm();
+      if (!S.co.confirm) setTimeout(() => { const c = $('#cpid'); if (c) c.focus(); }, 60);
+    } else if (!want) cb.innerHTML = '';
+  }
   const b = $('#cta-btn'); if (b) b.disabled = !idOk();
 }
 
@@ -461,7 +504,7 @@ async function ensureOrder() {
   const key = co.pack ? `${co.pack.custom ? 'c' + co.pack.uc : co.pack.offer_id}|${co.pid}|${CUR}` : null;
   if (co.order && co.order.status === 'awaiting_payment' && (!co.orderKey || co.orderKey === key)) return co.order;
   if (co.order && co.order.status === 'awaiting_payment') await api(`/orders/${co.order.id}/cancel`, { method: 'POST' }).catch(() => {});
-  co.order = await api('/orders', { method: 'POST', body: { game: 'pubg', ...(co.pack.custom ? { custom_uc: co.pack.uc } : { offer_id: co.pack.offer_id }), player_id: co.pid, save_id: co.save, currency: CUR } });
+  co.order = await api('/orders', { method: 'POST', body: { game: 'pubg', ...(co.pack.custom ? { custom_uc: co.pack.uc } : { offer_id: co.pack.offer_id }), player_id: co.pid, confirm_id: co.confirm, save_id: co.save, currency: CUR } });
   co.orderKey = key;
   if (co.save) api('/bootstrap').then((b) => { S.savedIds = b.saved_ids; }).catch(() => {});
   return co.order;
@@ -762,7 +805,7 @@ const actions = {
     if (cur().name === 'game' && S.co.pack) go('id');
     else if (cur().name === 'id' && idOk()) go('pay');
   },
-  'use-id': (el) => { S.co.pid = el.dataset.pid; const i = $('#pid'); i.value = S.co.pid; queueValidate(); haptic('light'); },
+  'use-id': (el) => { S.co.pid = el.dataset.pid; S.co.confirm = S.co.pid; const i = $('#pid'); i.value = S.co.pid; const c = $('#cpid'); if (c) c.value = S.co.confirm; queueValidate(); haptic('light'); },
   revalidate: () => queueValidate(),
   'toggle-save': (el) => { S.co.save = !S.co.save; el.classList.toggle('on', S.co.save); haptic('light'); },
   copy: (el) => copyText(el.dataset.text),

@@ -210,18 +210,19 @@ img { display: block; }
 .field.bad input { border-color: var(--err); box-shadow: 0 0 0 4px rgba(255, 107, 129, .14); }
 .spinner { width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid rgba(111, 168, 255, .25); border-top-color: var(--info); animation: spin .7s linear infinite; }
 .vbox { margin-top: 12px; min-height: 68px; }
+.vbox.slim { margin-top: 0; min-height: 0; }
+#cbox .field-label { margin-top: 16px; }
 .vcard { display: flex; align-items: center; gap: 13px; padding: 14px 16px; border-radius: 18px; animation: rise .3s both; }
 .vcard.ok { background: rgba(46, 229, 157, .12); border: 1.5px solid rgba(46, 229, 157, .55); }
 .vcard.bad { background: rgba(255, 107, 129, .1); border: 1.5px solid rgba(255, 107, 129, .5); }
 .vcard.wait { background: rgba(111, 168, 255, .1); border: 1.5px solid rgba(111, 168, 255, .4); }
-.vcard.warn { background: rgba(255, 181, 46, .1); border: 1.5px solid rgba(255, 181, 46, .55); }
-.vcard.warn .badge { background: #ffb52e; color: #2b1a00; }
 .vcard .badge { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none; }
 .vcard.ok .badge { background: var(--ok); color: #062a1b; }
 .vcard.bad .badge { background: var(--err); color: #2b0711; }
 .vcard.wait .badge { background: transparent; }
 .vcard .badge .ic { width: 22px; height: 22px; stroke-width: 3; }
 .vcard .small { font-size: 12px; font-weight: 600; color: var(--ok); }
+.chint { margin: 8px 4px 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
 .vcard .big { font-size: 19px; font-weight: 800; margin-top: 3px; word-break: break-all; }
 .vcard .msg { font-size: 13.5px; line-height: 1.45; font-weight: 500; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }

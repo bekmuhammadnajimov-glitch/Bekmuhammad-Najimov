@@ -330,6 +330,7 @@ class OrderIn(BaseModel):
     offer_id: str | None = None
     custom_uc: int | None = None
     player_id: str
+    confirm_id: str | None = None  # the ID typed a second time; required when the supplier cannot look IDs up
     save_id: bool = False
     currency: str = "UZS"
 
@@ -377,6 +378,8 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
     ok, nick, verified = await _validate(pid)  # the price and the ID are always checked server-side
     if not ok:
         raise HTTPException(422, "invalid_id")
+    if not verified and (body.confirm_id or "").strip() != pid:
+        raise HTTPException(422, "id_mismatch")
 
     order_id = uuid.uuid4().hex
     now = db.now()
@@ -400,7 +403,7 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
     await notify.admin_event(
         "order_created",
         f"🛒 <b>Yangi buyurtma</b> · {db.code(order_id)}\n{title} · {_money(price, body.currency)}\n"
-        f"ID: <code>{pid}</code> · {nick or ('⚠️ ID tekshirilmagan' if not verified else '—')}\nTo'lov: botda kutilmoqda",
+        f"ID: <code>{pid}</code> · {nick or '—'}\nTo'lov: botda kutilmoqda",
         order,
     )
     return _public(order)
