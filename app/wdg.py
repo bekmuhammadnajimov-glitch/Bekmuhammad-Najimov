@@ -290,7 +290,7 @@ class Wdg:
             queue, leaves, calls = list(hits), [], 0
             while queue:
                 c = queue.pop(0)
-                if c.get("has_children") and calls < 30:
+                if c.get("has_children") and calls < 40:
                     calls += 1
                     try:
                         kids = await self._categories(c.get("id"), ctype)
@@ -301,7 +301,7 @@ class Wdg:
                     queue += kids
                 else:
                     leaves.append(c)
-            for c in leaves[:25]:
+            for c in leaves[:45]:
                 cid = c.get("id")
                 try:
                     rows = await self._products(str(cid)) if ctype == "topup" else await self._type_products(str(cid), ctype)
@@ -309,8 +309,25 @@ class Wdg:
                     out.append(f"• {ctype} {cid} {html.escape(path.get(cid, ''))}: ⚠️ {html.escape(str(e))[:120]}")
                     continue
                 needs = ",".join(sorted({str(p.get("requires_player_id")) for p in rows})) or "-"
-                sample = " | ".join(f"{html.escape(str(p.get('name')))[:34]} ${p.get('price')}" for p in rows[:7])
+                sample = " | ".join(f"{html.escape(str(p.get('name')))[:34]} ${p.get('price')}" for p in rows[:8])
                 out.append(f"• {ctype} <code>{cid}</code> {html.escape(path.get(cid, ''))}: {len(rows)} mahsulot, ID={needs}\n   {sample}")
+        return out
+
+    async def dump(self, category_ids: list[str]) -> list[str]:
+        """Every product of the given categories with the flags that matter (price, Player ID needed, stock, type)."""
+        out: list[str] = []
+        for cid in category_ids:
+            try:
+                rows = await self._products(str(cid).strip())
+            except Exception as e:
+                out.append(f"== category {cid}: {html.escape(str(e))[:160]}")
+                continue
+            out.append(f"== category {cid}: {len(rows)} products")
+            for p in rows[:80]:
+                out.append(
+                    f"   {p.get('id')} | {html.escape(str(p.get('name')))[:60]} | ${p.get('price')} | type={p.get('type')} "
+                    f"| needs_id={p.get('requires_player_id')} | stock={p.get('stock')} | available={p.get('available')}"
+                )
         return out
 
     async def _type_products(self, category_id: str, ctype: str) -> list[dict]:

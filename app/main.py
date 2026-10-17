@@ -22,6 +22,7 @@ from .config import (
     SUPPLIER,
     WDG_API_KEY,
     WDG_DISCOVER,
+    WDG_DUMP,
     WDG_PUBG_CATEGORY_ID,
     WEBAPP_DIR,
     WEBAPP_URL,
@@ -58,6 +59,9 @@ async def _log_supplier_report() -> None:
                     log.info("game %s (%s): %s", g.id, g.default_region or "-", ", ".join(f"{p['amount']}=${p['cost_usd']}" for p in got))
                 except Exception as e:
                     log.warning("game %s: %s", g.id, e)
+        if WDG_DUMP and hasattr(fulfillment.supplier, "dump"):
+            for line in await fulfillment.supplier.dump(WDG_DUMP):
+                log.info("dump: %s", re.sub(r"<[^>]+>", "", line))
         if WDG_DISCOVER and hasattr(fulfillment.supplier, "discover"):
             for line in await fulfillment.supplier.discover(WDG_DISCOVER):
                 log.info("discover: %s", re.sub(r"<[^>]+>", "", line).replace("\n", " ¦ "))

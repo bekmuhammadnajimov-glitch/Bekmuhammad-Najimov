@@ -34,6 +34,7 @@ if SUPPLIER not in ("fazercards", "wdg"):
 WDG_API_KEY = os.getenv("WDG_API_KEY", "").strip()
 WDG_BASE_URL = os.getenv("WDG_BASE_URL", "https://wdgzone.tech/api/v1").strip().rstrip("/")
 DISABLED_GAMES = {g.strip() for g in os.getenv("DISABLED_GAMES", "").split(",") if g.strip()}  # kill switch, e.g. free_fire,tg_premium
+WDG_DUMP = [w.strip() for w in os.getenv("WDG_DUMP", "").split(",") if w.strip()]  # category ids whose products are listed in the log at startup
 WDG_DISCOVER = [w for w in os.getenv("WDG_DISCOVER", "").split(",") if w.strip()]  # catalogue search words, reported at startup
 WDG_PUBG_CATEGORY_ID = os.getenv("WDG_PUBG_CATEGORY_ID", "").strip()  # the WDG category holding PUBG Mobile UC by Player ID
 
