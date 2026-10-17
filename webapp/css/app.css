@@ -231,6 +231,13 @@ img { display: block; }
 .game-live .gl-from { font-size: 11px; color: var(--muted); margin-top: 4px; font-weight: 500; }
 .game-live .gl-from b { color: var(--accent-2); }
 .gart { display: grid; place-items: center; height: 100%; }
+.gimg { display: block; width: 108px; height: 108px; object-fit: contain; filter: drop-shadow(0 8px 10px rgba(0, 0, 0, .4)); }
+.gimg.sq { object-fit: cover; border-radius: 16px; filter: none; box-shadow: 0 8px 16px -6px rgba(0, 0, 0, .65), 0 0 0 1.5px rgba(255, 255, 255, .14); }
+.pack.gen .art { height: 130px; margin-top: -4px; }
+.pack.gen .gimg { width: 130px; height: 130px; }
+.oprod-art .gimg { width: 100px; height: 100px; }
+.mini-uc .gimg { width: 100%; height: 100%; }
+.mini-uc .gimg.sq { border-radius: 12px; }
 .gart .gicon { width: 68px; height: 68px; border-radius: 20px; box-shadow: 0 10px 20px -8px rgba(0, 0, 0, .6), 0 0 0 2px rgba(255, 255, 255, .18); }
 .oprod-art .gart .gicon { width: 78px; height: 78px; }
 .mini-uc .gicon { width: 100%; height: 100%; border-radius: 14px; }

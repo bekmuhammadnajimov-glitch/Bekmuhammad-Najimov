@@ -156,7 +156,24 @@ const kindOf = () => gameOf(S.game).kind || 'id'; // 'id' = numeric Player ID, '
 const idKind = () => kindOf() === 'username';
 const unitLabel = (u) => t('unit_' + u);
 const genTitle = (p) => (p.unit === 'months' ? `Premium · ${p.amount} ${unitLabel('months')}` : `${fmt(p.amount)} ${unitLabel(p.unit)}${p.region ? ' · ' + p.region : ''}`);
-const genArt = (id) => `<div class="art"><div class="gart">${gameIcon(id, '')}</div></div>`;
+/* Each pack shows its own game's artwork, bigger for bigger packs:
+   Free Fire = the six pictures of the in-game shop (gems, briefcase, chest, golden safe), Telegram Stars = 1..6 of
+   Telegram's own gold stars, Premium = Telegram's premium star with a 3 / 6 / 12 badge. */
+const PACK_TIERS = {
+  free_fire: (n) => [240, 450, 800, 1700, 3999].filter((x) => n > x).length + 1,
+  tg_stars: (n) => [75, 150, 350, 750, 1500].filter((x) => n > x).length + 1,
+};
+const packImg = (game, amount, cls = '') => {
+  if (PACK_TIERS[game]) {
+    const lv = PACK_TIERS[game](amount);
+    return game === 'free_fire'
+      ? `<img class="gimg sq ${cls}" src="assets/ff/ff${lv}.webp" alt="" width="108" height="108" loading="lazy">`
+      : `<img class="gimg ${cls}" src="assets/tg/stars${lv}.webp" alt="" width="108" height="108" loading="lazy">`;
+  }
+  if (game === 'tg_premium') return `<img class="gimg ${cls}" src="assets/tg/prem${[3, 6, 12].includes(amount) ? amount : 3}.webp" alt="" width="108" height="108" loading="lazy">`;
+  return '';
+};
+const genArt = (id, amount) => `<div class="art"><div class="gart">${packImg(id, amount) || gameIcon(id, '')}</div></div>`;
 const shownId = (id, kind) => (kind === 'username' ? '@' + id : id);
 const whoOf = (o) => o.nick || shownId(o.player_id, gameOf(o.game || 'pubg').kind) || '—';
 const REGION_KEY = 'nx_region';
@@ -258,7 +275,7 @@ const stepper = (n) => {
 
 const plateLabel = (p) => (p.section === 'prime' ? ((p.offer_id || '').includes('plus') ? 'PRIME+' : 'PRIME') : { uc: 'UC', pass: 'ELITE|PASS', wow: 'WOW' }[p.section] || 'PACK');
 const thumbHTML = (p) => (p.section === 'gen'
-  ? `<div class="mini-uc">${gameIcon(p.game, p.name)}</div>`
+  ? `<div class="mini-uc">${packImg(p.game, p.amount) || gameIcon(p.game, p.name)}</div>`
   : p.section === 'uc'
   ? `<div class="mini-uc">${ucImg(ucLevels(p)[0])}</div>`
   : `<div class="mini-plate">${plate(plateLabel(p), { detail: false, tone: p.section === 'wow' ? 'blue' : 'gold' })}</div>`);
@@ -355,8 +372,8 @@ const packCard = (p, i) => {
 
 const genCard = (p, i) => {
   const sel = S.co.pack && S.co.pack.section === 'gen' && S.co.pack.offer_id === p.offer_id;
-  return `<button class="pack t${Math.min(i, 4)} ${sel ? 'sel' : ''}" style="--i:${i}" data-act="pick-pack" data-offer="${esc(p.offer_id)}">
-  <span class="tick">${ic('check')}</span>${genArt(S.game)}
+  return `<button class="pack gen t${Math.min(i, 4)} ${sel ? 'sel' : ''}" style="--i:${i}" data-act="pick-pack" data-offer="${esc(p.offer_id)}">
+  <span class="tick">${ic('check')}</span>${genArt(S.game, p.amount)}
   <div class="uc">${esc(fmt(p.amount))}<small>${esc(unitLabel(p.unit))}</small></div>
   <div class="price">${money(priceOf(p))}</div><div class="per"></div></button>`;
 };
@@ -708,7 +725,7 @@ screens.order = () => {
     <h2>${t('hero_' + o.status)}</h2><p>${t('hero_' + o.status + '_sub')}</p>
   </div>
   <div class="oprod">
-    <div class="oprod-art">${o.game && o.game !== 'pubg' ? genArt(o.game) : packArt({ section: o.uc ? 'uc' : sectionOf(o.offer_id || ''), uc: o.uc, offer_id: o.offer_id, items: o.items })}</div>
+    <div class="oprod-art">${o.game && o.game !== 'pubg' ? genArt(o.game, o.uc) : packArt({ section: o.uc ? 'uc' : sectionOf(o.offer_id || ''), uc: o.uc, offer_id: o.offer_id, items: o.items })}</div>
     <div class="oprod-tx"><b>${esc(orderTitle(o))}</b><span>→ ${esc(whoOf(o))}</span></div>
   </div>
   ${tl}
