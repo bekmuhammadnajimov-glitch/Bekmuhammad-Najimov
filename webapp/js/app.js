@@ -128,7 +128,7 @@ const packTitle = (p) => { if (p.section === 'gen') return genTitle(p); const c 
 // Orders from the server only carry offer_id/name/uc; rebuild the same label.
 const orderTitle = (o) => {
   if (o.game && o.game !== 'pubg') {
-    const g = gameOf(o.game), region = g.unit === 'diamonds' ? (String(o.offer_name || '').split(' · ')[1] || '') : '';
+    const g = gameOf(o.game), region = g.regions && g.regions.length ? (String(o.offer_name || '').split(' · ')[1] || '') : '';
     return genTitle({ unit: g.unit, amount: o.uc, region });
   }
   return o.uc ? `${fmt(o.uc)} UC` : packTitle({ offer_id: o.offer_id, section: sectionOf(o.offer_id || ''), name: o.offer_name });
@@ -159,23 +159,21 @@ const genTitle = (p) => (p.unit === 'months' ? `Premium · ${p.amount} ${unitLab
 /* Each pack shows its own game's artwork, bigger for bigger packs:
    Free Fire = the six pictures of the in-game shop (gems, briefcase, chest, golden safe), Telegram Stars = 1..6 of
    Telegram's own gold stars, Premium = Telegram's premium star with a 3 / 6 / 12 badge. */
-const PACK_TIERS = {
-  free_fire: (n) => [240, 450, 800, 1700, 3999].filter((x) => n > x).length + 1,
-  tg_stars: (n) => [75, 150, 350, 750, 1500].filter((x) => n > x).length + 1,
+const PACK_ART = {
+  free_fire: { tier: (n) => [240, 450, 800, 1700, 3999].filter((x) => n > x).length + 1, src: (lv) => `assets/ff/ff${lv}.webp`, sq: true },
+  tg_stars: { tier: (n) => [75, 150, 350, 750, 1500].filter((x) => n > x).length + 1, src: (lv) => `assets/tg/stars${lv}.webp` },
+  fc_mobile: { tier: (n) => [49, 199, 799, 1599, 3499, 8999].filter((x) => n > x).length + 1, src: (lv) => `assets/fc/fc${lv}.webp` },
+  roblox: { tier: (n) => [400, 600, 1200, 3000, 8000].filter((x) => n > x).length + 1, src: (lv) => `assets/rbx/rbx${lv}.webp` },
 };
 const packImg = (game, amount, cls = '') => {
-  if (PACK_TIERS[game]) {
-    const lv = PACK_TIERS[game](amount);
-    return game === 'free_fire'
-      ? `<img class="gimg sq ${cls}" src="assets/ff/ff${lv}.webp" alt="" width="108" height="108" loading="lazy">`
-      : `<img class="gimg ${cls}" src="assets/tg/stars${lv}.webp" alt="" width="108" height="108" loading="lazy">`;
-  }
+  const a = PACK_ART[game];
+  if (a) return `<img class="gimg ${a.sq ? 'sq ' : ''}${cls}" src="${a.src(a.tier(amount))}" alt="" width="108" height="108" loading="lazy">`;
   if (game === 'tg_premium') return `<img class="gimg ${cls}" src="assets/tg/prem${[3, 6, 12].includes(amount) ? amount : 3}.webp" alt="" width="108" height="108" loading="lazy">`;
   return '';
 };
 const genArt = (id, amount) => `<div class="art"><div class="gart">${packImg(id, amount) || gameIcon(id, '')}</div></div>`;
 const shownId = (id, kind) => (kind === 'username' ? '@' + id : id);
-const whoOf = (o) => o.nick || shownId(o.player_id, gameOf(o.game || 'pubg').kind) || '—';
+const whoOf = (o) => (gameOf(o.game || 'pubg').kind === 'code' ? t('code_word') : o.nick || shownId(o.player_id, gameOf(o.game || 'pubg').kind) || '—');
 const REGION_KEY = 'nx_region';
 const savedRegion = (gid) => { try { return (JSON.parse(localStorage.getItem(REGION_KEY) || '{}'))[gid] || ''; } catch (_) { return ''; } };
 const saveRegion = (gid, r) => { try { const m = JSON.parse(localStorage.getItem(REGION_KEY) || '{}'); m[gid] = r; localStorage.setItem(REGION_KEY, JSON.stringify(m)); } catch (_) {} };
@@ -265,11 +263,13 @@ const cur = () => S.stack[S.stack.length - 1];
 function clearTimers() { clearInterval(S.timer); S.timer = null; }
 
 /* ---------------------------------------------------------------- components */
-const stepper = (n) => {
-  const labels = [t('step_pack'), t('step_id'), t('step_pay')];
+const stepper = (n0) => {
+  const code = kindOf() === 'code';
+  const labels = code ? [t('step_pack'), t('step_pay')] : [t('step_pack'), t('step_id'), t('step_pay')];
+  const n = code && n0 === 3 ? 2 : n0;
   return `<div class="stepper">${labels.map((l, i) => {
     const k = i + 1, cls = k < n ? 'done' : k === n ? 'on' : '';
-    return `<div class="step ${cls}"><span class="dot">${k < n ? ic('check') : k}</span>${l}</div>${k < 3 ? `<div class="step-line ${k < n ? 'done' : ''}"></div>` : ''}`;
+    return `<div class="step ${cls}"><span class="dot">${k < n ? ic('check') : k}</span>${l}</div>${k < labels.length ? `<div class="step-line ${k < n ? 'done' : ''}"></div>` : ''}`;
   }).join('')}</div>`;
 };
 
@@ -428,7 +428,9 @@ screens.game = () => {
   const co = S.co, g = gameOf(S.game), pubg = isPubg();
   const chips = pubg
     ? `<span>${ic('globe', 'sm')}Global</span><span>${ic('id', 'sm')}Player ID</span><span>${ic('bolt', 'sm')}${t('trust_fast')}</span>`
-    : `<span>${ic(idKind() ? 'send' : 'id', 'sm')}${idKind() ? 'Telegram' : 'Player ID'}</span><span>${ic('bolt', 'sm')}${t('trust_fast')}</span>`;
+    : kindOf() === 'code'
+      ? `<span>${ic('lock', 'sm')}${t('code_chip')}</span><span>${ic('bolt', 'sm')}${t('trust_fast')}</span>`
+      : `<span>${ic(idKind() ? 'send' : 'id', 'sm')}${idKind() ? 'Telegram' : 'Player ID'}</span><span>${ic('bolt', 'sm')}${t('trust_fast')}</span>`;
   return `${stepper(1)}
   <section class="gbanner">
     <div class="gbanner-bg" style="background-image:url(assets/games/${esc(g.id)}.webp)"></div>
@@ -601,7 +603,7 @@ async function ensureOrder() {
   if (co.order && co.order.status === 'awaiting_payment' && (!co.orderKey || co.orderKey === key)) return co.order;
   if (co.order && co.order.status === 'awaiting_payment') await api(`/orders/${co.order.id}/cancel`, { method: 'POST' }).catch(() => {});
   const what = isPubg() ? (co.pack.custom ? { custom_uc: co.pack.uc } : { offer_id: co.pack.offer_id }) : { offer_id: co.pack.offer_id, region: co.pack.region || '' };
-  co.order = await api('/orders', { method: 'POST', body: { game: S.game, ...what, player_id: co.pid, confirm_id: co.confirm, save_id: co.save, currency: CUR } });
+  co.order = await api('/orders', { method: 'POST', body: { game: S.game, ...what, player_id: co.pid, confirm_id: co.confirm, save_id: co.save && kindOf() !== 'code', currency: CUR } });
   co.orderKey = key;
   if (co.save) api('/bootstrap').then((b) => { S.savedIds = b.saved_ids; }).catch(() => {});
   return co.order;
@@ -613,7 +615,7 @@ const summaryCard = (o) => {
   <div class="sum-row"><span>${t('product')}</span><b>${esc(orderTitle(o))}</b></div>
   ${breakdown(o.items) ? `<div class="sum-row"><span>${t('contents')}</span><b>${breakdown(o.items)}</b></div>` : ''}
   ${o.nick ? `<div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick)}</b></div>` : ''}
-  <div class="sum-row"><span>${t(kind === 'username' ? 'tg_username' : 'player_id')}</span><b>${esc(shownId(o.player_id, kind))}</b></div>
+  ${kind === 'code' ? '' : `<div class="sum-row"><span>${t(kind === 'username' ? 'tg_username' : 'player_id')}</span><b>${esc(shownId(o.player_id, kind))}</b></div>`}
   <div class="sum-row total"><span>${t('to_pay')}</span><b>${money(o.amount, o.currency)}</b></div></div>`;
 };
 
@@ -647,7 +649,8 @@ function payBody() {
   }
   const lbl = p.provider === 'bot' ? t('go_bot') : p.provider === 'click' ? t('pay_click') : t('demo_pay');
   const dis = (p.provider === 'bot' || p.provider === 'click') && !p.available;
-  return `${stepper(3)}${summaryCard(o)}${pay}
+  const codeNote = kindOf() === 'code' ? `<div class="notice mt">${ic('lock', 'sm')}<span>${t('code_pay_note')}</span></div>` : '';
+  return `${stepper(3)}${summaryCard(o)}${pay}${codeNote}
     <button class="text-btn" data-act="cancel-order">${t('cancel_order')}</button>
     ${cta(money(o.amount, o.currency), lbl, dis, 'pay')}`;
 }
@@ -703,6 +706,15 @@ const ORB = {
   completed: ['ok', 'check'], failed: ['err', 'alert'], cancelled: ['mute', 'x'], expired: ['mute', 'clock'],
 };
 
+const codesCard = (o) => {
+  if (!(o.delivery && o.delivery.length)) return '';
+  const url = gameOf(o.game).redeem_url;
+  return `<div class="card codes"><div class="codes-h">${ic('lock')}<b>${t('code_title')}</b></div>
+    ${o.delivery.map((c) => `<div class="code-row"><code>${esc(c)}</code><button class="btn line sm" data-act="copy" data-text="${esc(c)}">${ic('copy', 'sm')}${t('code_copy')}</button></div>`).join('')}
+    <p class="code-hint">${t('code_hint')}</p>
+    ${url ? `<button class="btn gold block" data-act="open-url" data-url="${esc(url)}">${t('code_redeem')} ${ic('arrow', 'sm')}</button>` : ''}</div>`;
+};
+
 screens.order = () => {
   const o = S.viewOrder;
   if (!o) return `<div class="skeleton" style="height:240px"></div>`;
@@ -722,19 +734,20 @@ screens.order = () => {
   return `
   <div class="status-hero">
     <div class="status-orb ${tone} ${spin ? 'spin' : ''}">${ic(icon)}</div>
-    <h2>${t('hero_' + o.status)}</h2><p>${t('hero_' + o.status + '_sub')}</p>
+    <h2>${t('hero_' + o.status)}</h2><p>${t(o.status === 'completed' && gameOf(o.game || 'pubg').kind === 'code' ? 'hero_completed_code_sub' : 'hero_' + o.status + '_sub')}</p>
   </div>
   <div class="oprod">
     <div class="oprod-art">${o.game && o.game !== 'pubg' ? genArt(o.game, o.uc) : packArt({ section: o.uc ? 'uc' : sectionOf(o.offer_id || ''), uc: o.uc, offer_id: o.offer_id, items: o.items })}</div>
     <div class="oprod-tx"><b>${esc(orderTitle(o))}</b><span>→ ${esc(whoOf(o))}</span></div>
   </div>
+  ${codesCard(o)}
   ${tl}
   <div class="card sum-card mt">
     <div class="sum-row"><span>${t('order_no')}</span><b>${o.code}</b></div>
     <div class="sum-row"><span>${t('product')}</span><b>${esc(orderTitle(o))}</b></div>
     ${breakdown(o.items) ? `<div class="sum-row"><span>${t('contents')}</span><b>${breakdown(o.items)}</b></div>` : ''}
     ${o.nick ? `<div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick)}</b></div>` : ''}
-    <div class="sum-row"><span>${t(gameOf(o.game || 'pubg').kind === 'username' ? 'tg_username' : 'player_id')}</span><b>${esc(shownId(o.player_id, gameOf(o.game || 'pubg').kind))}</b></div>
+    ${gameOf(o.game || 'pubg').kind === 'code' ? '' : `<div class="sum-row"><span>${t(gameOf(o.game || 'pubg').kind === 'username' ? 'tg_username' : 'player_id')}</span><b>${esc(shownId(o.player_id, gameOf(o.game || 'pubg').kind))}</b></div>`}
     <div class="sum-row"><span>${t('date')}</span><b>${when(o.created_at)}</b></div>
     <div class="sum-row total"><span>${t('amount')}</span><b>${money(o.amount, o.currency)}</b></div></div>
   <div class="mt" style="display:grid;gap:10px">
@@ -917,13 +930,14 @@ const actions = {
     } catch (e) { toast(errText(e)); el.disabled = false; }
   },
   next: () => {
-    if (cur().name === 'game' && S.co.pack) go('id');
+    if (cur().name === 'game' && S.co.pack) { if (kindOf() === 'code') { S.co.pid = ''; S.co.confirm = ''; go('pay'); } else go('id'); }
     else if (cur().name === 'id' && idOk()) go('pay');
   },
   'use-id': (el) => { S.co.pid = el.dataset.pid; S.co.confirm = S.co.pid; const i = $('#pid'); i.value = S.co.pid; const c = $('#cpid'); if (c) c.value = S.co.confirm; queueValidate(); haptic('light'); },
   revalidate: () => queueValidate(),
   'toggle-save': (el) => { S.co.save = !S.co.save; el.classList.toggle('on', S.co.save); haptic('light'); },
   copy: (el) => copyText(el.dataset.text),
+  'open-url': (el) => openExternal(el.dataset.url),
   'cancel-order': async () => {
     const o = S.co.order;
     if (o) await api(`/orders/${o.id}/cancel`, { method: 'POST' }).catch(() => {});

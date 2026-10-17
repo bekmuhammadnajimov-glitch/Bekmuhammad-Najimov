@@ -26,6 +26,10 @@ class Game:
     default_region: str = ""
     enabled: bool = True  # set false by DISABLED_GAMES
     regions: tuple = field(default=())  # order shown in the app
+    delivery: str = "topup"  # "topup": the supplier credits an account | "code": we receive a code and hand it to the customer
+    allow: frozenset = frozenset()  # only these amounts are sold (empty = every pack that matches)
+    min_stock: int = 0  # skip packs the supplier has fewer than this many of
+    redeem_url: str = ""  # where a customer redeems a code
 
     @property
     def has_regions(self) -> bool:
@@ -37,6 +41,8 @@ class Game:
     def normalize(self, raw: str) -> str | None:
         """The recipient as it is stored and sent to the supplier, or None when it cannot be one."""
         value = (raw or "").strip()
+        if self.recipient == "none":
+            return ""  # codes go to whoever pays: there is nobody to name
         if self.recipient == "username":
             value = value.lstrip("@")
             return value if _USERNAME_RE.fullmatch(value) else None
@@ -44,6 +50,8 @@ class Game:
 
     def same(self, a: str, b: str) -> bool:
         """Do two entries of the recipient name the same one? Telegram usernames are not case sensitive."""
+        if self.recipient == "none":
+            return True
         x, y = self.normalize(a), self.normalize(b)
         return x is not None and y is not None and (x.lower() == y.lower() if self.recipient == "username" else x == y)
 
@@ -70,6 +78,18 @@ REGISTRY: dict[str, Game] = {
             id="free_fire", name="Free Fire", unit="diamonds", recipient="id", categories=_FF,
             pick=re.compile(r"^(\d+)\s+Diamonds$", re.I), band=(Decimal("0.003"), Decimal("0.03")),
             label="{amount} Diamonds · {region}", default_region="CIS", regions=tuple(_FF),
+        ),
+        Game(
+            id="fc_mobile", name="FC Mobile", unit="fcpoints", recipient="id",
+            categories={"ID": 16500, "MY": 16502, "SG": 16503, "KH": 16501},
+            pick=re.compile(r"^(\d+)\s+FC Points$", re.I), band=(Decimal("0.004"), Decimal("0.02")),
+            label="{amount} FC Points · {region}", default_region="ID", regions=("ID", "MY", "SG", "KH"),
+        ),
+        Game(
+            id="roblox", name="Roblox", unit="robux", recipient="none", delivery="code", categories={"": 2559},
+            pick=re.compile(r"^(\d+)\s+Robux$", re.I), band=(Decimal("0.005"), Decimal("0.05")),
+            label="{amount} Robux (kod)", allow=frozenset({300, 500, 700, 1000, 2500, 5250, 11000}), min_stock=10,
+            redeem_url="https://www.roblox.com/redeem",
         ),
     )
 }

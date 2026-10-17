@@ -18,6 +18,7 @@ from .config import (
     WDG_PUBG_CATEGORY_ID,
 )
 from .fazercards import FazerCards
+from .games import REGISTRY
 from .supplier import SupplierError
 from .wdg import Wdg
 
@@ -45,6 +46,7 @@ _POLL_EVERY = 5
 _POLL_LIMIT = 20 * 60
 
 _running: set[str] = set()
+_early_codes: dict[str, list[str]] = {}  # codes that came with the purchase answer itself, by supplier order id
 _tasks: set[asyncio.Task] = set()
 
 
@@ -77,7 +79,7 @@ async def _run(order_id: str) -> None:
             await _live(order)
         else:
             await asyncio.sleep(4)
-            await _complete(order, "mock")
+            await _complete(order, "mock", [f"DEMO-{order_id[:4].upper()}-{order_id[4:8].upper()}-{order_id[8:12].upper()}"] if _is_code(order) else None)
     except Exception as e:
         log.exception("fulfillment crashed for %s", order_id)
         order = await db.get_order(order_id)
@@ -85,6 +87,25 @@ async def _run(order_id: str) -> None:
             await _fail(order, f"internal error: {e}")
     finally:
         _running.discard(order_id)
+
+
+def _is_code(order: dict) -> bool:
+    g = REGISTRY.get(order.get("game"))
+    return bool(g and g.delivery == "code")
+
+
+async def _fetch_codes(order: dict, supplier_id: str) -> list[str] | None:
+    """The code(s) of one finished supplier order. None when the supplier did not give them (yet)."""
+    for attempt in range(6):
+        try:
+            codes = await supplier.delivery(supplier_id)
+            if codes:
+                _early_codes.pop(supplier_id, None)
+                return codes
+        except (SupplierError, httpx.HTTPError) as e:
+            log.warning("delivery fetch for %s failed: %s", order["id"], e)
+        await asyncio.sleep(3 * (attempt + 1))
+    return _early_codes.get(supplier_id)  # the purchase answer already carried them
 
 
 def _units(order: dict) -> list[str]:
@@ -129,6 +150,8 @@ async def _create_unit(order: dict, n: int, offer_id: str, gen: int) -> str | No
             if gen:
                 key += f"-g{gen}"
             res = await supplier.create_order(PUBG_ORDER_CATEGORY, offer_id, order["player_id"], idempotency_key=key)
+            if res["order"].get("items"):
+                _early_codes[res["order"]["id"]] = list(res["order"]["items"])
             return res["order"]["id"]
         except SupplierError as e:
             last_error = str(e)
@@ -167,6 +190,7 @@ async def _wait_unit(order: dict, n: int, supplier_id: str) -> bool | None:
 async def _live(order: dict) -> None:
     units = _units(order)
     ids, gen = _load_state(order["supplier_order_id"])
+    codes: list[str] = []
     for n, offer_id in enumerate(units):
         if n >= len(ids):
             sid = await _create_unit(order, n, offer_id, gen)
@@ -185,15 +209,28 @@ async def _live(order: dict) -> None:
             # forget the failed pack so an admin retry buys it again under a fresh key
             await db.update_order(order["id"], supplier_order_id=_dump_state(ids[:n], gen + 1))
             return await _fail(order, f"pack {n + 1}/{len(units)} failed at the supplier (already delivered: {n})")
-    await _complete(order, None)
+        if _is_code(order):
+            got = await _fetch_codes(order, ids[n])
+            if got is None:
+                # Paid for at the supplier but the code did not come through: never mark it failed, tell the admin.
+                # Retrying the order only asks for the code again; it cannot buy a second one.
+                await notify.alert_admins(order, "⚠️ <b>Kod olinmadi</b>", retry_button=True, extra=f"supplier order {ids[n]}: kod hali kelmadi, qayta urinib ko'ring")
+                return
+            codes += got
+    await _complete(order, None, codes or None)
 
 
-async def _complete(order: dict, supplier_id: str | None) -> None:
+async def _complete(order: dict, supplier_id: str | None, codes: list[str] | None = None) -> None:
     fields = {"status": "completed"}
     if supplier_id:
         fields["supplier_order_id"] = supplier_id
+    if codes:
+        fields["delivery"] = json.dumps(codes)
     await db.update_order(order["id"], **fields)
-    await notify.send_user(order, "completed")
+    if codes:
+        await notify.send_user(order, "completed_code", codes=codes)
+    else:
+        await notify.send_user(order, "completed")
     await notify.admin_event("completed", f"🎉 <b>Buyurtma yetkazildi</b> · {db.code(order['id'])} · {order['offer_name']} → {notify.recipient(order)}{_MOCK_TAG}", order)
 
 

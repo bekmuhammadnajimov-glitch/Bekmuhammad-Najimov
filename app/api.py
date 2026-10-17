@@ -60,7 +60,8 @@ def _games_view(from_price, from_price_rub) -> list[dict]:
         active = g.enabled and hasattr(fulfillment.supplier, "packs")
         cached = peek_game_packs(g, g.default_region) if active else None  # the home screen never waits for the supplier
         out.append({
-            "id": g.id, "name": g.name, "currency": g.unit, "unit": g.unit, "kind": g.recipient, "active": active,
+            "id": g.id, "name": g.name, "currency": g.unit, "unit": g.unit, "kind": "code" if g.delivery == "code" else g.recipient,
+            "redeem_url": g.redeem_url, "active": active,
             "regions": list(g.regions), "default_region": g.default_region,
             "from_price": min((p["price"] for p in cached), default=None) if cached else None,
             "from_price_rub": min((p["price_rub"] for p in cached), default=None) if cached else None,
@@ -146,6 +147,16 @@ def _items_of(order: dict) -> list[dict]:
     return [{"offer_id": order["offer_id"], "name": order["offer_name"], "uc": order["uc"], "qty": 1}]
 
 
+def _delivery_of(order: dict) -> list[str] | None:
+    """The codes of a completed code order. _public is only ever built for the order's own customer."""
+    if order["status"] != "completed" or not order.get("delivery"):
+        return None
+    try:
+        return json.loads(order["delivery"])
+    except ValueError:
+        return None
+
+
 def _public(order: dict) -> dict:
     return {
         "id": order["id"],
@@ -160,6 +171,7 @@ def _public(order: dict) -> dict:
         "amount": order["amount"],
         "currency": order["currency"],
         "status": order["status"],
+        "delivery": _delivery_of(order),
         "created_at": order["created_at"],
         "expires_at": order["expires_at"],
         "payment": _payment_view(order) if order["status"] == "awaiting_payment" else None,
@@ -433,6 +445,8 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
         nick, verified = None, False
         if not g.same(body.confirm_id or "", pid):
             raise HTTPException(422, "id_mismatch")
+        if g.delivery == "code":
+            body.save_id = False  # nothing to remember: the code goes to whoever pays
     else:
         pid = body.player_id.strip()
         ok, nick, verified = await _validate(pid)  # the price and the ID are always checked server-side
@@ -463,7 +477,12 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
     await notify.admin_event(
         "order_created",
         f"🛒 <b>Yangi buyurtma</b> · {db.code(order_id)}\n{title} · {_money(price, body.currency)}\n"
-        f"{'Username' if g is not None and g.recipient == 'username' else 'ID'}: <code>{'@' if g is not None and g.recipient == 'username' else ''}{pid}</code> · {nick or '—'}\nTo'lov: botda kutilmoqda",
+        + (
+            "Kod buyurtmasi (kod to'lovdan keyin yuboriladi)"
+            if g is not None and g.delivery == "code"
+            else f"{'Username' if g is not None and g.recipient == 'username' else 'ID'}: <code>{'@' if g is not None and g.recipient == 'username' else ''}{pid}</code> · {nick or '—'}"
+        )
+        + "\nTo'lov: botda kutilmoqda",
         order,
     )
     return _public(order)

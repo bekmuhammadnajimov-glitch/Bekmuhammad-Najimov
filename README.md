@@ -33,7 +33,7 @@ Bot menyu tugmasi va `/start` dagi "Ochish" tugmasi shu manzilga ulanadi.
 | O'zgaruvchi | Qiymat | Ma'nosi |
 |---|---|---|
 | `SUPPLIER` | `fazercards` (standart) / `wdg` | UC qaysi yetkazib beruvchidan olinadi. `wdg` uchun `WDG_API_KEY` va `WDG_PUBG_CATEGORY_ID` kerak (bot'da admin `/supplier` buyrug'i kategoriyalarni ko'rsatadi). WDG'da Player ID tekshiruvi yo'q: FazerCards kaliti bo'lsa va rejasi faol bo'lsa, ID shu orqali tekshiriladi, aks holda ID "tekshirilmagan" deb ogohlantirish bilan qabul qilinadi |
-| `DISABLED_GAMES` | bo'sh | `SUPPLIER=wdg` bilan PUBG UC'dan tashqari sotiladigan xizmatlar: `tg_stars`, `tg_premium`, `free_fire`. Bu yerga yozilganlari (vergul bilan) deploysiz o'chiriladi |
+| `DISABLED_GAMES` | bo'sh | `SUPPLIER=wdg` bilan PUBG UC'dan tashqari sotiladigan xizmatlar: `tg_stars`, `tg_premium`, `free_fire`, `fc_mobile`, `roblox` (Roblox kod sifatida sotiladi: kod to'lovdan keyin mijozga botda va Mini App'da beriladi). Bu yerga yozilganlari (vergul bilan) deploysiz o'chiriladi |
 | `FULFILLMENT_MODE` | `mock` | Supplier balansi sarflanmaydi, yetkazish simulyatsiya qilinadi |
 | | `live` | Haqiqiy FazerCards buyurtmalari (balans sarflanadi) |
 | `PAYMENT_PROVIDER` | `mock` | "Test to'lov" tugmasi to'lovni simulyatsiya qiladi |

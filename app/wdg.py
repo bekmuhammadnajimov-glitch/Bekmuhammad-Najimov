@@ -181,12 +181,21 @@ class Wdg:
     @staticmethod
     def _pack_of(game, p: dict) -> tuple[int, Decimal] | None:
         """(amount, cost in USD) when product `p` is one of `game`'s packs we can sell, else None."""
-        if p.get("available") is False or p.get("stock") == 0 or p.get("requires_player_id") is False:
+        stock = p.get("stock")
+        if p.get("available") is False or (isinstance(stock, (int, float)) and stock < max(game.min_stock, 1)):
+            return None
+        needs_id = p.get("requires_player_id")
+        if game.delivery == "code":
+            if needs_id:  # a top-up by Player ID, not a code
+                return None
+        elif needs_id is False:  # a voucher code, not a top-up
             return None
         m = game.pick.match(str(p.get("name", "")).strip())
         if not m:
             return None  # weekly cards, bundles, passes...: other products in the same category
         amount = int(m.group(1))
+        if game.allow and amount not in game.allow:
+            return None
         try:
             cost = Decimal(str(p["price"]))
         except (KeyError, InvalidOperation):
@@ -255,13 +264,41 @@ class Wdg:
             "POST",
             f"/products/{product_id}/purchase",
             headers={"X-Idempotency-Key": key},
-            json={"quantity": 1, "player_id": str(player_id)},
+            json={"quantity": 1, **({"player_id": str(player_id)} if player_id else {})},  # a voucher has nobody to credit
         )
         data = self._data(body) or {}
         if data.get("order_id") is None:
             raise WdgError(502, body)
         log.info("WDG order %s placed for product %s (total %s)", data["order_id"], product_id, data.get("total"))
-        return {"order": {"id": str(data["order_id"]), "status": str(data.get("status", "")).lower()}}
+        return {"order": {"id": str(data["order_id"]), "status": str(data.get("status", "")).lower(), "items": self._codes(data)}}
+
+    @staticmethod
+    def _codes(data) -> list[str]:
+        """The codes inside a purchase / delivery payload: a list of strings, or of objects holding a code, pin or key."""
+        items: list = []
+        if isinstance(data, dict):
+            for k in ("delivery_items", "items", "codes", "delivery"):
+                if isinstance(data.get(k), list):
+                    items = data[k]
+                    break
+        elif isinstance(data, list):
+            items = data
+        out: list[str] = []
+        for it in items:
+            if isinstance(it, str):
+                out.append(it.strip())
+            elif isinstance(it, dict):
+                for k in ("code", "pin", "key", "serial", "value", "card_number"):
+                    if it.get(k):
+                        out.append(str(it[k]).strip())
+                        break
+                else:
+                    out.append(" · ".join(str(v) for v in it.values() if isinstance(v, (str, int)))[:200])
+        return [c for c in out if c]
+
+    async def delivery(self, order_id: str) -> list[str]:
+        """The codes of a finished order (idempotent: asking twice returns the same codes). Empty while it is not ready."""
+        return self._codes(self._data(await self._request("GET", f"/orders/{order_id}/delivery")))
 
     async def get_order(self, order_id: str) -> dict:
         data = self._data(await self._request("GET", f"/orders/{order_id}")) or {}

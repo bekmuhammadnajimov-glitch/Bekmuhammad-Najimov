@@ -21,15 +21,26 @@ def recipient(order: dict) -> str:
     """Who the order is for, as HTML: @username for Telegram Stars/Premium, "Nick (ID)" or just the ID for games."""
     pid = html.escape(order["player_id"])
     g = REGISTRY.get(order.get("game"))
+    if g and g.delivery == "code":
+        return "kod"
     if g and g.recipient == "username":
         return f"@{pid}"
     nick = order.get("nick")
     return f"{html.escape(nick)} (<code>{pid}</code>)" if nick else f"<code>{pid}</code>"
 
 
+def _redeem_line(order: dict, lang: str) -> str:
+    g = REGISTRY.get(order.get("game"))
+    if not (g and g.redeem_url):
+        return ""
+    return {"uz": f"Kodni shu yerda faollashtiring: {g.redeem_url}\n", "ru": f"Активируйте код здесь: {g.redeem_url}\n"}[lang]
+
+
 def recipient_line(order: dict, lang: str) -> str:
     """The "who is it for" line of a message, labelled for the game: Telegram, Account or Player ID."""
     g = REGISTRY.get(order.get("game"))
+    if g and g.delivery == "code":
+        return {"uz": "Yetkazish: <b>kod shu chatga yuboriladi</b>", "ru": "Доставка: <b>код придёт в этот чат</b>"}[lang]
     if g and g.recipient == "username":
         return f"Telegram: <b>{recipient(order)}</b>"
     label = {"uz": "Akkaunt", "ru": "Аккаунт"}[lang] if order.get("nick") else "Player ID"
@@ -49,6 +60,10 @@ MSG = {
         "uz": "✅ <b>Buyurtma yetkazildi!</b>\n{title} → <b>{who}</b>\nBuyurtma <code>{code}</code>\n\nXaridingiz uchun rahmat! 🙌",
         "ru": "✅ <b>Заказ доставлен!</b>\n{title} → <b>{who}</b>\nЗаказ <code>{code}</code>\n\nСпасибо за покупку! 🙌",
     },
+    "completed_code": {
+        "uz": "✅ <b>Buyurtma yetkazildi!</b>\n{title}\n\n🔑 Kodingiz:\n{codes}\n{redeem}\nBuyurtma <code>{code}</code>\n\nKodni hech kimga bermang. Xaridingiz uchun rahmat! 🙌",
+        "ru": "✅ <b>Заказ доставлен!</b>\n{title}\n\n🔑 Ваш код:\n{codes}\n{redeem}\nЗаказ <code>{code}</code>\n\nНикому не передавайте код. Спасибо за покупку! 🙌",
+    },
     "failed": {
         "uz": "❗️ <b>Buyurtma bajarilmadi</b>\nBuyurtma <code>{code}</code> bo'yicha texnik muammo yuz berdi. Administrator buni ko'rib chiqadi — iltimos, qo'llab-quvvatlashga yozing.",
         "ru": "❗️ <b>Заказ не выполнен</b>\nПо заказу <code>{code}</code> возникла техническая проблема. Администратор разберётся — пожалуйста, напишите в поддержку.",
@@ -61,7 +76,7 @@ async def _lang(tg_id: int) -> str:
     return (row or {}).get("lang") or "uz"
 
 
-async def send_user(order: dict, key: str) -> None:
+async def send_user(order: dict, key: str, codes: list[str] | None = None) -> None:
     if not bot:
         return
     lang = await _lang(order["tg_id"])
@@ -69,6 +84,8 @@ async def send_user(order: dict, key: str) -> None:
         code=db.code(order["id"]),
         title=html.escape(order.get("offer_name") or ""),
         who=recipient(order),
+        codes="\n".join(f"<code>{html.escape(c)}</code>" for c in (codes or [])),
+        redeem=_redeem_line(order, lang),
     )
     try:
         await bot.send_message(order["tg_id"], text)
