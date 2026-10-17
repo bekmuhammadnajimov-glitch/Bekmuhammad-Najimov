@@ -9,8 +9,10 @@ import asyncio
 import html
 import logging
 import re
+import socket
 import time
 import uuid
+from urllib.parse import urlparse
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -266,6 +268,26 @@ class Wdg:
         return {"order": {"status": str(data.get("status", "")).lower(), "raw": data}}
 
     # ------------------------------------------------------------------ diagnostics (/supplier)
+    async def net_check(self) -> str:
+        """Why can we not reach WDG? DNS answers and a plain TCP connect to port 443 on each address (IPv4 and IPv6)."""
+        host = urlparse(str(self._http.base_url)).hostname
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+        except Exception as e:
+            return f"DNS {host}: {type(e).__name__} {e}"
+        parts = []
+        for ip in dict.fromkeys(i[4][0] for i in infos):
+            t0 = time.monotonic()
+            try:
+                _, w = await asyncio.wait_for(asyncio.open_connection(ip, 443), 6)
+                w.close()
+                parts.append(f"{ip} ok {int((time.monotonic() - t0) * 1000)}ms")
+            except asyncio.TimeoutError:
+                parts.append(f"{ip} timeout")
+            except Exception as e:
+                parts.append(f"{ip} {type(e).__name__}")
+        return f"{host} -> " + " | ".join(parts)
+
     async def _categories(self, parent_id=None, ctype: str = "topup") -> list[dict]:
         params = {"parent_id": parent_id} if parent_id is not None else None
         return self._rows(await self._request("GET", f"/catalog/{ctype}/categories", params=params), "categories", "items")
@@ -366,7 +388,10 @@ class Wdg:
             d = self._data(await self._request("GET", "/me")) or {}
             out.append(f"✅ WDG ulandi: {html.escape(str(d.get('name')))} · balans <b>{d.get('balance')} {d.get('currency')}</b>")
         except Exception as e:
-            return [f"❌ WDG'ga ulanib bo'lmadi: {html.escape(type(e).__name__)}: {html.escape(str(e))[:250]}"]
+            return [
+                f"❌ WDG'ga ulanib bo'lmadi: {html.escape(type(e).__name__)}: {html.escape(str(e))[:250]}",
+                f"tarmoq: {html.escape(await self.net_check())}",
+            ]
         hits: list[dict] = []
         try:
             hits = [c for c in await self._categories() if re.search(r"pubg", str(c.get("name", "")), re.I)]
