@@ -71,6 +71,8 @@ async def init() -> None:
         await _db.execute("ALTER TABLE orders ADD COLUMN items TEXT")
     if "delivery" not in cols:  # codes handed to the customer (Roblox...), JSON list
         await _db.execute("ALTER TABLE orders ADD COLUMN delivery TEXT")
+    if "section" not in cols:  # which list of the game the pack came from ("" = the main one), see games.Extra
+        await _db.execute("ALTER TABLE orders ADD COLUMN section TEXT")
     async with _db.execute("PRAGMA table_info(users)") as cur:
         ucols = {r["name"] for r in await cur.fetchall()}
     if "last_seen" not in ucols:

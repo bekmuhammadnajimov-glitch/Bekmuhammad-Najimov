@@ -57,7 +57,7 @@ async def _log_supplier_report() -> None:
             if g.enabled and hasattr(fulfillment.supplier, "packs"):
                 try:
                     got = await game_packs(fulfillment.supplier, g, g.default_region)
-                    log.info("game %s (%s): %s", g.id, g.default_region or "-", ", ".join(f"{p['amount']}=${p['cost_usd']}" for p in got))
+                    log.info("game %s (%s): %s", g.id, g.default_region or "-", ", ".join(f"{p['section'] + ':' if p['section'] else ''}{p['label'] or p['amount']}=${p['cost_usd']}" for p in got))
                 except Exception as e:
                     log.warning("game %s: %s", g.id, e)
         if WDG_DUMP and hasattr(fulfillment.supplier, "dump"):

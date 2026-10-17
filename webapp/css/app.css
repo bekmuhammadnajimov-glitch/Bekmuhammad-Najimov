@@ -87,6 +87,8 @@ img { display: block; }
 .sec { font-size: 17px; font-weight: 800; margin: 26px 2px 12px; display: flex; align-items: center; justify-content: flex-start; letter-spacing: -.01em; }
 .sec::before { content: ""; width: 4px; height: 18px; border-radius: 3px; background: var(--accent-grad); margin-right: 10px; flex: none; }
 .sec .link { margin-left: auto; color: var(--accent-2); font-weight: 600; font-size: 13px; }
+.sec.gsec { font-size: 15px; margin: 22px 2px 10px; }
+.sec.gsec::before { height: 15px; }
 
 /* ---------- hero ---------- */
 .hero { position: relative; overflow: hidden; border-radius: 26px; padding: 22px 18px 22px 20px; background: var(--hero-grad); box-shadow: 0 18px 40px -16px rgba(80, 60, 230, .75); display: grid; grid-template-columns: 1.1fr .9fr; align-items: center; gap: 4px; }

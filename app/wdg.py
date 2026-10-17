@@ -13,6 +13,8 @@ import re
 import socket
 import time
 import uuid
+from functools import reduce
+from math import gcd
 from urllib.parse import urlparse
 from decimal import Decimal, InvalidOperation
 
@@ -27,6 +29,11 @@ _UC_RE = re.compile(r"(\d[\d.,]*)\s*UC\b", re.I)
 # some entries at $999) or a different product, and must never reach customers.
 _MIN_PER_UC, _MAX_PER_UC = Decimal("0.005"), Decimal("0.05")
 _PAGE = 100
+_PER_PURCHASE = Decimal("0.01")  # what one more supplier purchase counts when packs are put together (see Wdg._combos)
+
+
+def _usd(cost: Decimal) -> str:
+    return str(cost.quantize(Decimal("0.0001")))
 
 
 class WdgError(SupplierError):
@@ -180,8 +187,8 @@ class Wdg:
         }
 
     @staticmethod
-    def _pack_of(game, p: dict) -> tuple[int, Decimal] | None:
-        """(amount, cost in USD) when product `p` is one of `game`'s packs we can sell, else None."""
+    def _sellable(game, p: dict) -> Decimal | None:
+        """The cost in USD when product `p` could be sold for `game` right now (in stock, delivered the way the game is), else None."""
         stock = p.get("stock")
         if p.get("available") is False or (isinstance(stock, (int, float)) and stock < max(game.min_stock, 1)):
             return None
@@ -191,15 +198,20 @@ class Wdg:
                 return None
         elif needs_id is False:  # a voucher code, not a top-up
             return None
-        m = game.pick.match(str(p.get("name", "")).strip())
+        try:
+            return Decimal(str(p["price"]))
+        except (KeyError, InvalidOperation):
+            return None
+
+    @classmethod
+    def _pack_of(cls, game, p: dict) -> tuple[int, Decimal] | None:
+        """(amount, cost in USD) when product `p` is one of `game`'s main packs we can sell, else None."""
+        cost = cls._sellable(game, p)
+        m = game.pick.match(str(p.get("name", "")).strip()) if cost is not None else None
         if not m:
             return None  # weekly cards, bundles, passes...: other products in the same category
         amount = int(m.group(1))
         if game.allow and amount not in game.allow:
-            return None
-        try:
-            cost = Decimal(str(p["price"]))
-        except (KeyError, InvalidOperation):
             return None
         low, high = game.band
         if amount <= 0 or not (low <= cost / amount <= high):
@@ -207,23 +219,107 @@ class Wdg:
             return None
         return amount, cost
 
+    @staticmethod
+    def _nice(name: str) -> str:
+        """One spelling for the same item across servers: 'WEEKLY LITE' / 'Level Up Package - Level 10' -> 'Weekly Lite' / 'Level Up Package 10'."""
+        s = re.sub(r"\s*-\s*Level\s*", " ", re.sub(r"\s+", " ", name.strip()), flags=re.I)
+        return re.sub(r"\bBp\b", "BP", s.title())
+
+    @classmethod
+    def _extra_of(cls, game, p: dict):
+        """(extra, key, amount, label, cost) when product `p` belongs to one of the game's extra sections, else None."""
+        cost = cls._sellable(game, p)
+        name = str(p.get("name", "")).strip()
+        if cost is None or not name:
+            return None
+        for e in game.extras:
+            m = e.pick.match(name)
+            if not m:
+                continue
+            amount = 0 if e.named else int(m.group(1))
+            low, high = e.band
+            per = cost if e.named else (cost / amount if amount > 0 else None)
+            if per is None or not (low <= per <= high):
+                log.warning("skipping %s product %r: $%s looks wrong", game.id, name, cost)
+                return None
+            label = cls._nice(name) if e.named else ""
+            return e, (label.lower() if e.named else amount), amount, label, cost
+        return None
+
+    @staticmethod
+    def _combos(packs: dict[int, Decimal], targets, max_units: int) -> dict[int, tuple[Decimal, dict[int, int]]]:
+        """The cheapest way to reach each target amount exactly from the given packs (amount -> cost). Every extra purchase
+        counts one cent, so a few big packs beat many small ones whose prices only differ by rounding.
+        Targets that cannot be made, or need more than `max_units` packs, are left out."""
+        if not packs:
+            return {}
+        step = reduce(gcd, packs)
+        top = max(targets, default=0) // step
+        table: list = [None] * (top + 1)  # table[a] = (score, cost, packs used, last pack)
+        table[0] = (Decimal(0), Decimal(0), 0, 0)
+        for a in range(1, top + 1):
+            for amount, cost in packs.items():
+                k = amount // step
+                prev = table[a - k] if k <= a else None
+                if prev is not None:
+                    cand = (prev[1] + cost + _PER_PURCHASE * (prev[2] + 1), prev[1] + cost, prev[2] + 1, amount)
+                    if table[a] is None or cand[:3] < table[a][:3]:
+                        table[a] = cand
+        out = {}
+        for target in targets:
+            a = target // step
+            if target % step or table[a] is None or table[a][2] > max_units:
+                continue
+            counts: dict[int, int] = {}
+            total = table[a][1]
+            while a:
+                counts[table[a][3]] = counts.get(table[a][3], 0) + 1
+                a -= table[a][3] // step
+            out[target] = (total, counts)
+        return out
+
     async def packs(self, game, region: str = "") -> list[dict]:
-        """The packs `game` sells in `region`: [{"offer_id": WDG product id, "amount", "cost_usd"}], cheapest product per amount."""
+        """The packs `game` sells in `region`, cheapest product per amount (or per name): the main list, amounts put together
+        from several packs (`game.build`), then each of the game's extra sections. Rows: offer_id (a WDG product id), amount, cost_usd,
+        section ("" = main), unit, label (named items), title (extras), items (built amounts)."""
         category = game.categories.get(region)
         if category is None:
             raise WdgError(404, f"{game.id} has no region {region!r}")
-        best: dict[int, tuple[Decimal, int | str]] = {}
+        best: dict[tuple, tuple] = {}  # (section, key) -> (cost, product id, amount, label); the cheapest product wins
         for cid in category if isinstance(category, (tuple, list)) else (category,):  # several bundles are merged
             for p in await self._products(str(cid)):
-                parsed = self._pack_of(game, p)
-                if parsed and (parsed[0] not in best or parsed[1] < best[parsed[0]][0]):
-                    best[parsed[0]] = (parsed[1], p["id"])
+                found = None
+                if (main := self._pack_of(game, p)) is not None:
+                    found = ("", main[0], main[1], main[0], "")
+                elif (extra := self._extra_of(game, p)) is not None:
+                    found = (extra[0].id, extra[1], extra[4], extra[2], extra[3])
+                if found and (found[:2] not in best or found[2] < best[found[:2]][0]):
+                    best[found[:2]] = (found[2], p["id"], found[3], found[4])
         if not best:
             raise WdgError(404, f"no purchasable {game.id} packs in WDG category {category}")
-        return [
-            {"offer_id": str(pid), "amount": amount, "cost_usd": str(cost.quantize(Decimal("0.0001")))}
-            for amount, (cost, pid) in sorted(best.items())
+        main = {amount: (cost, pid) for (section, amount), (cost, pid, _, _) in best.items() if section == ""}
+        out = [
+            {"offer_id": str(pid), "amount": amount, "cost_usd": _usd(cost), "section": "", "unit": "", "label": ""}
+            for amount, (cost, pid) in sorted(main.items())
         ]
+        if game.build and main:
+            built = self._combos({a: c for a, (c, _) in main.items()}, [a for a in game.build if a not in main], game.build_units)
+            for amount, (cost, counts) in built.items():
+                out.append({
+                    "offer_id": f"{game.id}-{amount}", "amount": amount, "cost_usd": _usd(cost), "section": "", "unit": "", "label": "",
+                    "items": [
+                        {"offer_id": str(main[a][1]), "name": game.title(a, region), "uc": a, "qty": n} for a, n in sorted(counts.items())
+                    ],
+                })
+            out.sort(key=lambda r: r["amount"])
+        for e in game.extras:
+            rows = [
+                {"offer_id": str(pid), "amount": amount, "cost_usd": _usd(cost), "section": e.id, "unit": e.unit, "label": label,
+                 "title": e.title(amount, label, region)}
+                for (section, _), (cost, pid, amount, label) in best.items() if section == e.id
+            ]
+            out += sorted(rows, key=lambda r: (r["amount"], Decimal(r["cost_usd"]), r["label"]))
+        return out
 
     async def validate_player(self, category_id: str, player_id: str) -> dict:
         if self._checker is not None and time.time() >= self._checker_off_until:

@@ -109,12 +109,15 @@ async def game_packs(supplier, game, region: str = "") -> list[dict]:
         {
             "offer_id": r["offer_id"],
             "amount": r["amount"],
-            "unit": game.unit,
-            "name": game.title(r["amount"], region),
+            "unit": r.get("unit") or game.unit,
+            "name": r.get("title") or game.title(r["amount"], region),
+            "section": r.get("section", ""),  # "" = the game's main list, else the id of one of its extras (FC Silver, Free Fire specials)
+            "label": r.get("label", ""),  # the name of an item that has no amount (Weekly Membership)
             "region": region,
             "cost_usd": r["cost_usd"],
             "price": uzs_price(r["cost_usd"]),
             "price_rub": rub_price(r["cost_usd"]),
+            **({"items": r["items"]} if r.get("items") else {}),  # an amount put together from several supplier packs
         }
         for r in raw
     ]

@@ -14,6 +14,25 @@ _ID_RE = re.compile(r"\d{5,20}")
 
 
 @dataclass(frozen=True)
+class Extra:
+    """Products of a game's category that are not in its main list: another currency (FC Mobile Silver) or items
+    sold under their own name (Free Fire weekly / monthly memberships, passes, bundles). Shown as their own section."""
+
+    id: str  # the section the app groups them under
+    pick: re.Pattern  # group 1 = the amount; a pattern without a group matches named items (the product name is the pack)
+    band: tuple  # believable USD cost per unit (numeric) or for the whole item (named)
+    unit: str = ""  # the app translates it; numeric extras only
+    label: str = "{name} · {region}"  # how the pack is named in orders and in the bot
+
+    @property
+    def named(self) -> bool:
+        return self.pick.groups == 0
+
+    def title(self, amount: int, name: str, region: str = "") -> str:
+        return self.label.format(amount=amount, name=name, region=region).removesuffix(" · ")
+
+
+@dataclass(frozen=True)
 class Game:
     id: str
     name: str
@@ -30,6 +49,9 @@ class Game:
     allow: frozenset = frozenset()  # only these amounts are sold (empty = every pack that matches)
     min_stock: int = 0  # skip packs the supplier has fewer than this many of
     redeem_url: str = ""  # where a customer redeems a code
+    extras: tuple = ()  # more sections of the same categories, see Extra
+    build: tuple = ()  # amounts the supplier has no product for, put together from several of the main packs (Telegram Stars)
+    build_units: int = 10  # at most this many supplier purchases per built amount
 
     @property
     def has_regions(self) -> bool:
@@ -68,6 +90,8 @@ REGISTRY: dict[str, Game] = {
             id="tg_stars", name="Telegram Stars", unit="stars", recipient="username", categories={"": 9},
             pick=re.compile(r"^(\d+)\s+Telegram Stars$", re.I), band=(Decimal("0.008"), Decimal("0.03")),
             label="{amount} Stars",
+            # WDG sells 50-2500 directly; Telegram's other sizes are the same price per star, so they are several packs at once
+            build=(150, 350, 750, 1500, 3500, 5000, 7500, 10000, 15000, 25000),
         ),
         Game(
             id="tg_premium", name="Telegram Premium", unit="months", recipient="username", categories={"": 9},
@@ -78,12 +102,18 @@ REGISTRY: dict[str, Game] = {
             id="free_fire", name="Free Fire", unit="diamonds", recipient="id", categories=_FF,
             pick=re.compile(r"^(\d+)\s+Diamonds$", re.I), band=(Decimal("0.003"), Decimal("0.03")),
             label="{amount} Diamonds · {region}", default_region="CIS", regions=tuple(_FF),
+            extras=(Extra(
+                "special",
+                re.compile(r"^(?:weekly|monthly|level up|evo access|booyah pass|bp card|newbie bundle)\b", re.I),
+                band=(Decimal("0.05"), Decimal("60")),
+            ),),
         ),
         Game(
             id="fc_mobile", name="FC Mobile", unit="fcpoints", recipient="id",
             categories={"ID": 16500, "MY": 16502, "SG": 16503, "KH": 16501},
             pick=re.compile(r"^(\d+)\s+FC Points$", re.I), band=(Decimal("0.004"), Decimal("0.02")),
             label="{amount} FC Points · {region}", default_region="ID", regions=("ID", "MY", "SG", "KH"),
+            extras=(Extra("silver", re.compile(r"^(\d+)\s+Silver$", re.I), band=(Decimal("0.004"), Decimal("0.02")), unit="silver", label="{amount} Silver · {region}"),),
         ),
         Game(
             id="roblox", name="Roblox", unit="robux", recipient="none", delivery="code", categories={"": (2559, 706)},  # US and Global

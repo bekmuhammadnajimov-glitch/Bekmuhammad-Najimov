@@ -63,7 +63,7 @@ def _games_view(from_price, from_price_rub) -> list[dict]:
     ]
     for g in REGISTRY.values():
         active = g.enabled and hasattr(fulfillment.supplier, "packs")
-        cached = peek_game_packs(g, g.default_region) if active else None  # the home screen never waits for the supplier
+        cached = [p for p in peek_game_packs(g, g.default_region) or [] if not p["section"]] if active else None  # the home screen never waits for the supplier
         out.append({
             "id": g.id, "name": g.name, "currency": g.unit, "unit": g.unit, "kind": "code" if g.delivery == "code" else g.recipient,
             "redeem_url": g.redeem_url, "active": active,
@@ -170,6 +170,7 @@ def _public(order: dict) -> dict:
         "uc": order["uc"],
         "offer_id": order["offer_id"],
         "offer_name": order["offer_name"],
+        "section": order.get("section") or "",
         "items": _items_of(order),
         "player_id": order["player_id"],
         "nick": order["nick"],
@@ -306,7 +307,7 @@ async def packs(game: str, region: str = "", user: dict = Depends(current_user))
             raise HTTPException(503, "catalog_unavailable")
         return {
             "region": region,
-            "packs": [{k: p[k] for k in ("offer_id", "amount", "unit", "name", "price", "price_rub")} for p in items],
+            "packs": [{k: p[k] for k in ("offer_id", "amount", "unit", "name", "section", "label", "price", "price_rub")} for p in items],
         }
     try:
         items = await pubg_packs(fulfillment.supplier)
@@ -405,6 +406,7 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
     if pending["n"] >= 3:
         raise HTTPException(429, "too_many_pending")
 
+    section = ""
     if g is not None:
         region = body.region if g.has_regions else ""
         if g.has_regions and region not in g.categories:
@@ -416,9 +418,10 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
         pack = next((p for p in catalog if p["offer_id"] == body.offer_id), None)
         if not pack:
             raise HTTPException(404, "pack_not_found")
-        order_items = [{"offer_id": pack["offer_id"], "name": pack["name"], "uc": pack["amount"], "qty": 1}]
+        section = pack["section"]
+        order_items = pack.get("items") or [{"offer_id": pack["offer_id"], "name": pack["name"], "uc": pack["amount"], "qty": 1}]
         title, uc_total, price, cost_usd = pack["name"], pack["amount"], price_in(pack["cost_usd"], body.currency), pack["cost_usd"]
-        first_offer = pack["offer_id"]
+        first_offer = order_items[0]["offer_id"]
     else:
         try:
             items = await pubg_packs(fulfillment.supplier)
@@ -464,12 +467,12 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
     now = db.now()
     await db.execute(
         """INSERT INTO orders (id, tg_id, game, offer_id, offer_name, uc, player_id, nick, amount, currency, cost_usd,
-                               status, payment_provider, created_at, updated_at, expires_at, items)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                               status, payment_provider, created_at, updated_at, expires_at, items, section)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             order_id, user["tg_id"], body.game, first_offer, title, uc_total, pid, nick,
             price, body.currency, cost_usd, "awaiting_payment", provider_for(body.currency), now, now,
-            now + PAYMENT_TTL_MIN * 60, json.dumps(order_items),
+            now + PAYMENT_TTL_MIN * 60, json.dumps(order_items), section,
         ),
     )
     if body.save_id:
