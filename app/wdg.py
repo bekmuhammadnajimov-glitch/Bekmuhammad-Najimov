@@ -7,6 +7,7 @@ still verify IDs; without one the ID is accepted as "unverified" and the app war
 """
 import asyncio
 import html
+import json
 import logging
 import re
 import socket
@@ -383,6 +384,8 @@ class Wdg:
                 out.append(f"== category {cid}: {html.escape(str(e))[:160]}")
                 continue
             out.append(f"== category {cid}: {len(rows)} products")
+            if rows:  # one product as the supplier sends it, to see every field it carries
+                out.append("   raw: " + html.escape(json.dumps(rows[0], ensure_ascii=False))[:700])
             for p in rows[:80]:
                 out.append(
                     f"   {p.get('id')} | {html.escape(str(p.get('name')))[:60]} | ${p.get('price')} | type={p.get('type')} "
