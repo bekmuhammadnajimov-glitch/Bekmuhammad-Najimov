@@ -86,6 +86,7 @@ img { display: block; }
 .card-hl { background: linear-gradient(160deg, var(--card-2), var(--card)); border: 1px solid var(--line-strong); border-radius: 22px; box-shadow: var(--shadow); }
 .sec { font-size: 17px; font-weight: 800; margin: 26px 2px 12px; display: flex; align-items: center; justify-content: flex-start; letter-spacing: -.01em; }
 .sec::before { content: ""; width: 4px; height: 18px; border-radius: 3px; background: var(--accent-grad); margin-right: 10px; flex: none; }
+#games { scroll-margin-top: 16px; }
 .sec .link { margin-left: auto; color: var(--accent-2); font-weight: 600; font-size: 13px; }
 /* top donors */
 .lb { display: flex; flex-direction: column; gap: 8px; }

@@ -344,14 +344,14 @@ screens.home = () => {
       <div class="eyebrow">${t('hello', { name })}</div>
       <h1>${t('hero_title')}</h1>
       <p>${t('hero_sub')}</p>
-      <button class="btn gold sm" data-act="open-game" data-game="pubg">${t('start')} ${ic('arrow', 'sm')}</button>
+      <button class="btn gold sm" data-act="to-games">${t('start')} ${ic('arrow', 'sm')}</button>
     </div>
     <div class="hero-art">${gameIcon('pubg', 'PUBG Mobile', 'i1')}<div class="i-plates">${ucImg(4)}</div>${gameIcon('free_fire', 'Free Fire', 'i2')}</div>
   </section>
 
   <section class="trust">${trust.map(([i, k, c]) => `<div class="trust-item"><div class="chipic ${c}">${ic(i)}</div><span>${t(k)}</span></div>`).join('')}</section>
 
-  <h2 class="sec"><span>${t('games')}</span></h2>
+  <h2 class="sec" id="games"><span>${t('games')}</span></h2>
   <button class="featured" data-act="open-game" data-game="pubg">
     <div class="featured-bg" style="background-image:url(assets/games/pubg.webp)"></div>
     <div class="featured-in">
@@ -943,6 +943,7 @@ const actions = {
     document.querySelectorAll('.pack').forEach((b) => b.classList.toggle('sel', b === el));
     syncCta();
   },
+  'to-games': () => { haptic('light'); const el = $('#games'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, // "Boshlash" shows the games, it does not pick one for the customer
   'set-tab': (el) => { S.tab = el.dataset.sec; haptic('light'); renderPacks(); },
   'lb-period': (el) => {
     S.lbPeriod = el.dataset.period; haptic('light');
