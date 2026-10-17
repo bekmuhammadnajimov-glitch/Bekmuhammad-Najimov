@@ -65,7 +65,7 @@ class Wdg:
         self._http = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers={"X-API-Key": api_key, "Accept": "application/json"},
-            timeout=30,
+            timeout=httpx.Timeout(30, connect=8),  # a supplier that is down should fail fast, not hold every request for 30 s
             transport=transport,
         )
         self._category = str(pubg_category_id or "").strip()
