@@ -176,6 +176,42 @@ class Wdg:
             ],
         }
 
+    @staticmethod
+    def _pack_of(game, p: dict) -> tuple[int, Decimal] | None:
+        """(amount, cost in USD) when product `p` is one of `game`'s packs we can sell, else None."""
+        if p.get("available") is False or p.get("stock") == 0 or p.get("requires_player_id") is False:
+            return None
+        m = game.pick.match(str(p.get("name", "")).strip())
+        if not m:
+            return None  # weekly cards, bundles, passes...: other products in the same category
+        amount = int(m.group(1))
+        try:
+            cost = Decimal(str(p["price"]))
+        except (KeyError, InvalidOperation):
+            return None
+        low, high = game.band
+        if amount <= 0 or not (low <= cost / amount <= high):
+            log.warning("skipping %s product %r: $%s for %s looks wrong", game.id, p.get("name"), cost, amount)
+            return None
+        return amount, cost
+
+    async def packs(self, game, region: str = "") -> list[dict]:
+        """The packs `game` sells in `region`: [{"offer_id": WDG product id, "amount", "cost_usd"}], cheapest product per amount."""
+        category = game.categories.get(region)
+        if category is None:
+            raise WdgError(404, f"{game.id} has no region {region!r}")
+        best: dict[int, tuple[Decimal, int | str]] = {}
+        for p in await self._products(str(category)):
+            parsed = self._pack_of(game, p)
+            if parsed and (parsed[0] not in best or parsed[1] < best[parsed[0]][0]):
+                best[parsed[0]] = (parsed[1], p["id"])
+        if not best:
+            raise WdgError(404, f"no purchasable {game.id} packs in WDG category {category}")
+        return [
+            {"offer_id": str(pid), "amount": amount, "cost_usd": str(cost.quantize(Decimal("0.0001")))}
+            for amount, (cost, pid) in sorted(best.items())
+        ]
+
     async def validate_player(self, category_id: str, player_id: str) -> dict:
         if self._checker is not None and time.time() >= self._checker_off_until:
             for attempt in range(3):
@@ -205,10 +241,13 @@ class Wdg:
     async def create_order(
         self, category_id: str, offer_id: str, player_id: str, idempotency_key: str | None = None
     ) -> dict:
-        m = re.fullmatch(r"(\d+)_uc", offer_id)
-        if not m:
-            raise WdgError(404, f"unsupported offer {offer_id}")
-        product_id = await self._product_for(int(m.group(1)))
+        if str(offer_id).isdigit():  # a WDG product id: every pack except PUBG UC, which is mapped from "<uc>_uc"
+            product_id = int(offer_id)
+        else:
+            m = re.fullmatch(r"(\d+)_uc", str(offer_id))
+            if not m:
+                raise WdgError(404, f"unsupported offer {offer_id}")
+            product_id = await self._product_for(int(m.group(1)))
         key = (idempotency_key or uuid.uuid4().hex)[:100]  # the same key on a retry returns the original order
         body = await self._request(
             "POST",

@@ -90,6 +90,44 @@ async def pubg_packs(supplier: FazerCards) -> list[dict]:
     return packs
 
 
+_gcache: dict[str, tuple[float, list[dict]]] = {}
+
+
+async def game_packs(supplier, game, region: str = "") -> list[dict]:
+    """The fixed packs of a registry game (see games.py) in one region, with our prices. Cached; stale cache is served on errors."""
+    key = f"{game.id}:{region}"
+    hit = _gcache.get(key)
+    if hit and time.time() - hit[0] < _CACHE_TTL:
+        return hit[1]
+    try:
+        raw = await supplier.packs(game, region)
+    except Exception:
+        if hit:
+            return hit[1]
+        raise
+    packs = [
+        {
+            "offer_id": r["offer_id"],
+            "amount": r["amount"],
+            "unit": game.unit,
+            "name": game.title(r["amount"], region),
+            "region": region,
+            "cost_usd": r["cost_usd"],
+            "price": uzs_price(r["cost_usd"]),
+            "price_rub": rub_price(r["cost_usd"]),
+        }
+        for r in raw
+    ]
+    _gcache[key] = (time.time(), packs)
+    return packs
+
+
+def peek_game_packs(game, region: str = "") -> list[dict] | None:
+    """Whatever is cached right now (the home screen must never wait for the supplier)."""
+    hit = _gcache.get(f"{game.id}:{region}")
+    return hit[1] if hit else None
+
+
 # ---- exact-amount UC combinations (unbounded knapsack over the supplier's UC packs) ----
 _DP_LIMIT = MAX_CUSTOM_UC + 1200
 _dp_cache: dict[tuple, list] = {}

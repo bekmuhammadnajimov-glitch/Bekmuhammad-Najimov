@@ -222,6 +222,20 @@ img { display: block; }
 .vcard.wait .badge { background: transparent; }
 .vcard .badge .ic { width: 22px; height: 22px; stroke-width: 3; }
 .vcard .small { font-size: 12px; font-weight: 600; color: var(--ok); }
+.games-live { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.game-live { display: flex; align-items: center; gap: 11px; padding: 12px; border-radius: 18px; background: var(--card); border: 1.5px solid var(--line-strong); text-align: left; box-shadow: var(--shadow); transition: transform .15s; min-width: 0; }
+.game-live:active { transform: scale(.97); }
+.game-live .gicon { width: 46px; height: 46px; border-radius: 13px; flex: none; }
+.game-live .gl-tx { min-width: 0; }
+.game-live .gl-name { font-size: 13.5px; font-weight: 800; line-height: 1.2; }
+.game-live .gl-from { font-size: 11px; color: var(--muted); margin-top: 4px; font-weight: 500; }
+.game-live .gl-from b { color: var(--accent-2); }
+.gart { display: grid; place-items: center; height: 100%; }
+.gart .gicon { width: 68px; height: 68px; border-radius: 20px; box-shadow: 0 10px 20px -8px rgba(0, 0, 0, .6), 0 0 0 2px rgba(255, 255, 255, .18); }
+.oprod-art .gart .gicon { width: 78px; height: 78px; }
+.mini-uc .gicon { width: 100%; height: 100%; border-radius: 14px; }
+.region-tabs { margin-bottom: 4px; }
+.chint.region-hint { margin: 6px 2px 18px; }
 .chint { margin: 8px 4px 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
 .vcard .big { font-size: 19px; font-weight: 800; margin-top: 3px; word-break: break-all; }
 .vcard .msg { font-size: 13.5px; line-height: 1.45; font-weight: 500; }

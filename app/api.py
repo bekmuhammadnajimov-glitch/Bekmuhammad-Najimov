@@ -24,14 +24,14 @@ from .config import (
     SUPPORT_USERNAME,
     provider_for,
 )
-from .pricing import price_in, pubg_packs, quote_uc, uc_options
+from .games import REGISTRY
+from .pricing import game_packs, peek_game_packs, price_in, pubg_packs, quote_uc, uc_options
 from .supplier import SupplierError
 
 router = APIRouter(prefix="/api")
 
 GAMES = [
     {"id": "pubg", "name": "PUBG Mobile", "currency": "UC", "active": True},
-    {"id": "free_fire", "name": "Free Fire", "currency": "Diamonds", "active": False},
     {"id": "mobile_legends", "name": "Mobile Legends", "currency": "Diamonds", "active": False},
     {"id": "codm", "name": "Call of Duty Mobile", "currency": "CP", "active": False},
     {"id": "genshin", "name": "Genshin Impact", "currency": "Crystals", "active": False},
@@ -40,6 +40,32 @@ GAMES = [
 ]
 
 _ID_RE = re.compile(r"\d{5,14}")
+
+
+def _game(game_id: str):
+    """A registry game that is on sale right now (it needs a supplier that can list packs), else 404."""
+    g = REGISTRY.get(game_id)
+    if not g or not g.enabled or not hasattr(fulfillment.supplier, "packs"):
+        raise HTTPException(404, "not_found")
+    return g
+
+
+def _games_view(from_price, from_price_rub) -> list[dict]:
+    out = [
+        {**g, "kind": "id", "from_price": from_price if g["id"] == "pubg" else None,
+         "from_price_rub": from_price_rub if g["id"] == "pubg" else None}
+        for g in GAMES
+    ]
+    for g in REGISTRY.values():
+        active = g.enabled and hasattr(fulfillment.supplier, "packs")
+        cached = peek_game_packs(g, g.default_region) if active else None  # the home screen never waits for the supplier
+        out.append({
+            "id": g.id, "name": g.name, "currency": g.unit, "unit": g.unit, "kind": g.recipient, "active": active,
+            "regions": list(g.regions), "default_region": g.default_region,
+            "from_price": min((p["price"] for p in cached), default=None) if cached else None,
+            "from_price_rub": min((p["price_rub"] for p in cached), default=None) if cached else None,
+        })
+    return out
 _hits: dict[int, deque] = defaultdict(deque)
 
 
@@ -198,11 +224,7 @@ async def bootstrap(user: dict = Depends(current_user)):
             "setup_done": bool(user["setup_done"]),
         },
         "stats": await _stats(user["tg_id"]),
-        "games": [
-            {**g, "from_price": from_price if g["id"] == "pubg" else None,
-             "from_price_rub": from_price_rub if g["id"] == "pubg" else None}
-            for g in GAMES
-        ],
+        "games": _games_view(from_price, from_price_rub),
         "saved_ids": ids,
         "recent_orders": [_public(o) for o in recent],
         "support_username": SUPPORT_USERNAME,
@@ -254,9 +276,21 @@ async def finish_setup(body: SetupIn, user: dict = Depends(current_user)):
 
 # ---------------------------------------------------------------- catalog
 @router.get("/games/{game}/packs")
-async def packs(game: str, user: dict = Depends(current_user)):
+async def packs(game: str, region: str = "", user: dict = Depends(current_user)):
     if game != "pubg":
-        raise HTTPException(404, "not_found")
+        g = _game(game)
+        if not g.has_regions:
+            region = ""
+        elif region not in g.categories:
+            raise HTTPException(422, "bad_region")
+        try:
+            items = await game_packs(fulfillment.supplier, g, region)
+        except Exception:
+            raise HTTPException(503, "catalog_unavailable")
+        return {
+            "region": region,
+            "packs": [{k: p[k] for k in ("offer_id", "amount", "unit", "name", "price", "price_rub")} for p in items],
+        }
     try:
         items = await pubg_packs(fulfillment.supplier)
     except Exception:
@@ -318,7 +352,10 @@ async def _validate(player_id: str) -> tuple[bool, str | None, bool]:
 @router.post("/validate")
 async def validate(body: ValidateIn, user: dict = Depends(current_user)):
     if body.game != "pubg":
-        raise HTTPException(404, "not_found")
+        g = _game(body.game)
+        _rate_limit(user["tg_id"])
+        # No supplier can look these recipients up: only the format is checked, the customer types it twice
+        return {"valid": g.normalize(body.player_id) is not None, "nick": None, "verified": False}
     _rate_limit(user["tg_id"])
     ok, nick, verified = await _validate(body.player_id)
     return {"valid": ok, "nick": nick if ok else None, "verified": verified}
@@ -331,14 +368,14 @@ class OrderIn(BaseModel):
     custom_uc: int | None = None
     player_id: str
     confirm_id: str | None = None  # the ID typed a second time; required when the supplier cannot look IDs up
+    region: str = ""  # the account's game server, for games that have one (Free Fire)
     save_id: bool = False
     currency: str = "UZS"
 
 
 @router.post("/orders")
 async def create_order(body: OrderIn, user: dict = Depends(current_user)):
-    if body.game != "pubg":
-        raise HTTPException(404, "not_found")
+    g = None if body.game == "pubg" else _game(body.game)  # None = PUBG UC, which has its own pack logic
     if body.currency not in CURRENCIES:
         raise HTTPException(422, "bad_currency")
     _rate_limit(user["tg_id"], limit=10)
@@ -351,35 +388,58 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
     if pending["n"] >= 3:
         raise HTTPException(429, "too_many_pending")
 
-    try:
-        items = await pubg_packs(fulfillment.supplier)
-    except Exception:
-        raise HTTPException(503, "catalog_unavailable")
-    # Price, contents and totals are always rebuilt server-side; the client only names what it wants.
-    if body.custom_uc:
-        q = quote_uc(items, body.custom_uc)
-        if not q["ok"]:
-            raise HTTPException(422, "bad_amount")
-        order_items = q["items"]
-        title, uc_total, price, cost_usd = f"{q['uc']} UC", q["uc"], price_in(q["cost_usd"], body.currency), q["cost_usd"]
-        first_offer = order_items[0]["offer_id"]
-    else:
-        pack = next((p for p in items if p["offer_id"] == body.offer_id and p["section"] == "uc"), None)
+    if g is not None:
+        region = body.region if g.has_regions else ""
+        if g.has_regions and region not in g.categories:
+            raise HTTPException(422, "bad_region")
+        try:
+            catalog = await game_packs(fulfillment.supplier, g, region)
+        except Exception:
+            raise HTTPException(503, "catalog_unavailable")
+        pack = next((p for p in catalog if p["offer_id"] == body.offer_id), None)
         if not pack:
             raise HTTPException(404, "pack_not_found")
-        order_items = [{"offer_id": pack["offer_id"], "name": pack["name"], "uc": pack["uc"], "qty": 1}]
-        title, uc_total, price, cost_usd = pack["name"], pack["uc"], price_in(pack["cost_usd"], body.currency), pack["cost_usd"]
+        order_items = [{"offer_id": pack["offer_id"], "name": pack["name"], "uc": pack["amount"], "qty": 1}]
+        title, uc_total, price, cost_usd = pack["name"], pack["amount"], price_in(pack["cost_usd"], body.currency), pack["cost_usd"]
         first_offer = pack["offer_id"]
+    else:
+        try:
+            items = await pubg_packs(fulfillment.supplier)
+        except Exception:
+            raise HTTPException(503, "catalog_unavailable")
+        # Price, contents and totals are always rebuilt server-side; the client only names what it wants.
+        if body.custom_uc:
+            q = quote_uc(items, body.custom_uc)
+            if not q["ok"]:
+                raise HTTPException(422, "bad_amount")
+            order_items = q["items"]
+            title, uc_total, price, cost_usd = f"{q['uc']} UC", q["uc"], price_in(q["cost_usd"], body.currency), q["cost_usd"]
+            first_offer = order_items[0]["offer_id"]
+        else:
+            pack = next((p for p in items if p["offer_id"] == body.offer_id and p["section"] == "uc"), None)
+            if not pack:
+                raise HTTPException(404, "pack_not_found")
+            order_items = [{"offer_id": pack["offer_id"], "name": pack["name"], "uc": pack["uc"], "qty": 1}]
+            title, uc_total, price, cost_usd = pack["name"], pack["uc"], price_in(pack["cost_usd"], body.currency), pack["cost_usd"]
+            first_offer = pack["offer_id"]
 
     if not await _wallet_covers(cost_usd):
         raise HTTPException(503, "unavailable")
 
-    pid = body.player_id.strip()
-    ok, nick, verified = await _validate(pid)  # the price and the ID are always checked server-side
-    if not ok:
-        raise HTTPException(422, "invalid_id")
-    if not verified and (body.confirm_id or "").strip() != pid:
-        raise HTTPException(422, "id_mismatch")
+    if g is not None:
+        pid = g.normalize(body.player_id)
+        if pid is None:
+            raise HTTPException(422, "invalid_id")
+        nick, verified = None, False
+        if not g.same(body.confirm_id or "", pid):
+            raise HTTPException(422, "id_mismatch")
+    else:
+        pid = body.player_id.strip()
+        ok, nick, verified = await _validate(pid)  # the price and the ID are always checked server-side
+        if not ok:
+            raise HTTPException(422, "invalid_id")
+        if not verified and (body.confirm_id or "").strip() != pid:
+            raise HTTPException(422, "id_mismatch")
 
     order_id = uuid.uuid4().hex
     now = db.now()
@@ -388,7 +448,7 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
                                status, payment_provider, created_at, updated_at, expires_at, items)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            order_id, user["tg_id"], "pubg", first_offer, title, uc_total, pid, nick,
+            order_id, user["tg_id"], body.game, first_offer, title, uc_total, pid, nick,
             price, body.currency, cost_usd, "awaiting_payment", provider_for(body.currency), now, now,
             now + PAYMENT_TTL_MIN * 60, json.dumps(order_items),
         ),
@@ -397,13 +457,13 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
         await db.execute(
             "INSERT INTO saved_ids (tg_id, game, player_id, nick) VALUES (?,?,?,?) "
             "ON CONFLICT (tg_id, game, player_id) DO UPDATE SET nick = excluded.nick",
-            (user["tg_id"], "pubg", pid, nick),
+            (user["tg_id"], body.game, pid, nick),
         )
     order = await db.get_order(order_id)
     await notify.admin_event(
         "order_created",
         f"🛒 <b>Yangi buyurtma</b> · {db.code(order_id)}\n{title} · {_money(price, body.currency)}\n"
-        f"ID: <code>{pid}</code> · {nick or '—'}\nTo'lov: botda kutilmoqda",
+        f"{'Username' if g is not None and g.recipient == 'username' else 'ID'}: <code>{'@' if g is not None and g.recipient == 'username' else ''}{pid}</code> · {nick or '—'}\nTo'lov: botda kutilmoqda",
         order,
     )
     return _public(order)

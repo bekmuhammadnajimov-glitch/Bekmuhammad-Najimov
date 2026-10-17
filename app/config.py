@@ -33,6 +33,7 @@ if SUPPLIER not in ("fazercards", "wdg"):
     raise RuntimeError(f"SUPPLIER must be fazercards or wdg, not {SUPPLIER!r}")
 WDG_API_KEY = os.getenv("WDG_API_KEY", "").strip()
 WDG_BASE_URL = os.getenv("WDG_BASE_URL", "https://wdgzone.tech/api/v1").strip().rstrip("/")
+DISABLED_GAMES = {g.strip() for g in os.getenv("DISABLED_GAMES", "").split(",") if g.strip()}  # kill switch, e.g. free_fire,tg_premium
 WDG_DISCOVER = [w for w in os.getenv("WDG_DISCOVER", "").split(",") if w.strip()]  # catalogue search words, reported at startup
 WDG_PUBG_CATEGORY_ID = os.getenv("WDG_PUBG_CATEGORY_ID", "").strip()  # the WDG category holding PUBG Mobile UC by Player ID
 

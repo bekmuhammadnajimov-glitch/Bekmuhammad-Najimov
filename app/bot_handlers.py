@@ -35,7 +35,7 @@ dp = Dispatcher()
 TEXT = {
     "uz": {
         "fallback": "Buyurtma berish uchun «Ochish» tugmasini bosing, savol bo'lsa admin bilan bog'laning 👇",
-        "welcome": "UC tanlang, ID kiriting, to'lang — qolganini biz bajaramiz.",
+        "welcome": "Paketni tanlang, ID kiriting, to'lang — qolganini biz bajaramiz.",
         "cancel_btn": "❌ Bekor qilish",
         "pay_instr": "💳 <b>To'lov</b> · <code>{code}</code>\n\nMahsulot: <b>{title}</b>\nAkkaunt: <b>{nick}</b> (<code>{pid}</code>)\n\nTo'lov summasi: <b>{amount}</b>\n❗️ <b>Aynan shu summani</b> o'tkazing.\n\nKarta raqami (bosib nusxalang):\n<code>{card}</code>\n{card_info}\n⏳ {minutes} daqiqa ichida to'lang.\nTo'lagach <b>chek skrinshotini</b> shu chatga yuboring 👇",
         "pay_no_card": "Kechirasiz, bu valyutada to'lov hozircha ulanmagan. /settings orqali boshqa valyutani tanlang yoki admin bilan bog'laning.",
@@ -55,7 +55,7 @@ TEXT = {
     },
     "ru": {
         "fallback": "Чтобы сделать заказ, нажмите «Открыть», а по вопросам напишите админу 👇",
-        "welcome": "Выберите UC, введите ID, оплатите — остальное мы сделаем сами.",
+        "welcome": "Выберите пакет, введите ID, оплатите — остальное мы сделаем сами.",
         "cancel_btn": "❌ Отменить",
         "pay_instr": "💳 <b>Оплата</b> · <code>{code}</code>\n\nТовар: <b>{title}</b>\nАккаунт: <b>{nick}</b> (<code>{pid}</code>)\n\nСумма к оплате: <b>{amount}</b>\n❗️ Переведите <b>ровно эту сумму</b>.\n\nНомер карты (нажмите, чтобы скопировать):\n<code>{card}</code>\n{card_info}\n⏳ Оплатите в течение {minutes} минут.\nПосле оплаты отправьте <b>скриншот чека</b> в этот чат 👇",
         "pay_no_card": "Извините, оплата в этой валюте пока не подключена. Выберите другую валюту через /settings или напишите админу.",

@@ -120,12 +120,19 @@ function cardText(p) {
     case 'prime': { const m = id.match(/^prime(_plus)?_(\d+)_months?$/); return { main: m && m[1] ? 'Prime+' : 'Prime', sub: m ? t('months', { n: m[2] }) : '' }; }
     case 'pass': { const m = id.match(/lv1_(\d+)$/); return { main: id.includes('plus') ? 'Elite Pass+' : 'Elite Pass', sub: m ? `1–${m[1]}` : '' }; }
     case 'wow': return { main: fmt(parseInt(id, 10)), sub: 'WOW' };
+    case 'gen': return { main: fmt(p.amount), sub: unitLabel(p.unit) };
     default: return { main: p.name, sub: '', long: true };
   }
 }
-const packTitle = (p) => { const c = cardText(p); return `${c.main}${c.sub ? ' ' + c.sub : ''}`; };
+const packTitle = (p) => { if (p.section === 'gen') return genTitle(p); const c = cardText(p); return `${c.main}${c.sub ? ' ' + c.sub : ''}`; };
 // Orders from the server only carry offer_id/name/uc; rebuild the same label.
-const orderTitle = (o) => (o.uc ? `${fmt(o.uc)} UC` : packTitle({ offer_id: o.offer_id, section: sectionOf(o.offer_id || ''), name: o.offer_name }));
+const orderTitle = (o) => {
+  if (o.game && o.game !== 'pubg') {
+    const g = gameOf(o.game), region = g.unit === 'diamonds' ? (String(o.offer_name || '').split(' · ')[1] || '') : '';
+    return genTitle({ unit: g.unit, amount: o.uc, region });
+  }
+  return o.uc ? `${fmt(o.uc)} UC` : packTitle({ offer_id: o.offer_id, section: sectionOf(o.offer_id || ''), name: o.offer_name });
+};
 const breakdown = (items) => (items && (items.length > 1 || (items[0] && items[0].qty > 1)) ? items.map((i) => `${i.qty} × ${i.uc ? fmt(i.uc) + ' UC' : esc(i.name)}`).join(' + ') : '');
 
 function packArt(p) {
@@ -142,11 +149,25 @@ function packArt(p) {
 const gameIcon = (id, name, cls = '') =>
   `<img class="gicon ${cls}" src="assets/games/${esc(id)}.webp" alt="${esc(name)}" width="96" height="96" loading="lazy">`;
 
+/* ---- every game except PUBG UC (Telegram Stars/Premium, Free Fire...) is a list of fixed packs from the server ---- */
+const gameOf = (id) => S.games.find((g) => g.id === id) || { id, name: id, kind: 'id', unit: '' };
+const isPubg = () => S.game === 'pubg';
+const kindOf = () => gameOf(S.game).kind || 'id'; // 'id' = numeric Player ID, 'username' = Telegram @username
+const idKind = () => kindOf() === 'username';
+const unitLabel = (u) => t('unit_' + u);
+const genTitle = (p) => (p.unit === 'months' ? `Premium · ${p.amount} ${unitLabel('months')}` : `${fmt(p.amount)} ${unitLabel(p.unit)}${p.region ? ' · ' + p.region : ''}`);
+const genArt = (id) => `<div class="art"><div class="gart">${gameIcon(id, '')}</div></div>`;
+const shownId = (id, kind) => (kind === 'username' ? '@' + id : id);
+const whoOf = (o) => o.nick || shownId(o.player_id, gameOf(o.game || 'pubg').kind) || '—';
+const REGION_KEY = 'nx_region';
+const savedRegion = (gid) => { try { return (JSON.parse(localStorage.getItem(REGION_KEY) || '{}'))[gid] || ''; } catch (_) { return ''; } };
+const saveRegion = (gid, r) => { try { const m = JSON.parse(localStorage.getItem(REGION_KEY) || '{}'); m[gid] = r; localStorage.setItem(REGION_KEY, JSON.stringify(m)); } catch (_) {} };
+
 /* ---------------------------------------------------------------- state */
 const S = {
   user: null, stats: { orders: 0, spent: 0 }, games: [], savedIds: [], recent: [],
   support: '', provider: 'mock', packs: null, ucOptions: [], bestUc: null,
-  tab: 'uc',
+  tab: 'uc', game: 'pubg', region: '', gpacks: null,
   stack: [{ name: 'home' }],
   co: null, vseq: 0, vtimer: null, timer: null, viewOrder: null, ordersList: null,
 };
@@ -236,7 +257,9 @@ const stepper = (n) => {
 };
 
 const plateLabel = (p) => (p.section === 'prime' ? ((p.offer_id || '').includes('plus') ? 'PRIME+' : 'PRIME') : { uc: 'UC', pass: 'ELITE|PASS', wow: 'WOW' }[p.section] || 'PACK');
-const thumbHTML = (p) => (p.section === 'uc'
+const thumbHTML = (p) => (p.section === 'gen'
+  ? `<div class="mini-uc">${gameIcon(p.game, p.name)}</div>`
+  : p.section === 'uc'
   ? `<div class="mini-uc">${ucImg(ucLevels(p)[0])}</div>`
   : `<div class="mini-plate">${plate(plateLabel(p), { detail: false, tone: p.section === 'wow' ? 'blue' : 'gold' })}</div>`);
 
@@ -248,17 +271,23 @@ const cta = (total, label, disabled, act, hidden = false) => `<div class="cta-ba
   <button class="btn gold" id="cta-btn" data-act="${act}" ${disabled ? 'disabled' : ''}>${label} ${ic('arrow', 'sm')}</button></div>`;
 
 const orderRow = (o) => `<button class="orow" data-act="open-order" data-id="${o.id}">
-  ${gameIcon('pubg', 'PUBG Mobile')}<div class="mid"><div class="t">${esc(orderTitle(o))}</div><div class="s">${o.code} · ${when(o.created_at)}</div></div>
+  ${gameIcon(o.game || 'pubg', gameOf(o.game || 'pubg').name)}<div class="mid"><div class="t">${esc(orderTitle(o))}</div><div class="s">${o.code} · ${when(o.created_at)}</div></div>
   <div class="end"><div class="a">${money(o.amount, o.currency)}</div>${tag(o.status)}</div></button>`;
 
 /* ---------------------------------------------------------------- screens */
 const screens = {};
 const after = {};
 
+const liveCard = (g) => {
+  const from = priceOf({ price: g.from_price, price_rub: g.from_price_rub });
+  return `<button class="game-live" data-act="open-game" data-game="${esc(g.id)}">${gameIcon(g.id, g.name)}<div class="gl-tx"><div class="gl-name">${esc(g.name)}</div><div class="gl-from">${from ? t('from_price', { price: `<b>${money(from)}</b>` }) : t('top_up')}</div></div></button>`;
+};
+
 screens.home = () => {
   const name = esc(S.user.first_name || '');
   const pubg = S.games.find((g) => g.id === 'pubg');
   const soon = S.games.filter((g) => !g.active);
+  const live = S.games.filter((g) => g.active && g.id !== 'pubg');
   const trust = [['bolt', 'trust_fast', 'c-orange'], ['shield', 'trust_safe', 'c-green'], ['support', 'trust_help', 'c-blue'], ['tag', 'trust_price', 'c-violet']];
   return `
   <header class="topbar">
@@ -291,6 +320,7 @@ screens.home = () => {
     </div>
     <span class="go">${ic('arrow')}</span>
   </button>
+  ${live.length ? `<div class="games-live">${live.map(liveCard).join('')}</div>` : ''}
   <div class="games-soon">${soon.slice(0, 6).map((g) => `<div class="game-soon">${gameIcon(g.id, g.name)}<div class="name">${esc(g.name)}</div><span class="pill">${t('soon')}</span></div>`).join('')}</div>
 
   ${S.recent.length ? `<h2 class="sec"><span>${t('recent')}</span><button class="link" data-act="tab" data-tab="orders">${t('all')}</button></h2>${S.recent.map(orderRow).join('')}` : ''}`;
@@ -323,6 +353,23 @@ const packCard = (p, i) => {
   <div class="per">${foot}</div></button>`;
 };
 
+const genCard = (p, i) => {
+  const sel = S.co.pack && S.co.pack.section === 'gen' && S.co.pack.offer_id === p.offer_id;
+  return `<button class="pack t${Math.min(i, 4)} ${sel ? 'sel' : ''}" style="--i:${i}" data-act="pick-pack" data-offer="${esc(p.offer_id)}">
+  <span class="tick">${ic('check')}</span>${genArt(S.game)}
+  <div class="uc">${esc(fmt(p.amount))}<small>${esc(unitLabel(p.unit))}</small></div>
+  <div class="price">${money(priceOf(p))}</div><div class="per"></div></button>`;
+};
+
+// Games with several servers (Free Fire) are paid per server, and the account only accepts its own: the customer picks it first.
+const regionHTML = () => {
+  const g = gameOf(S.game);
+  if (!g.regions || !g.regions.length) return '';
+  return `<div class="field-label">${t('region_label')}</div>
+  <div class="tabs region-tabs">${g.regions.map((r) => `<button class="tabchip ${S.region === r ? 'on' : ''}" data-act="set-region" data-region="${esc(r)}">${esc(r)}</button>`).join('')}</div>
+  <div class="chint region-hint">${t('region_hint')}</div>`;
+};
+
 // Section tabs only appear when more than one product type is on sale (right now only UC is).
 const tabsHTML = () => {
   const secs = SECTIONS.filter((s) => s === 'uc' || S.packs.some((p) => p.section === s));
@@ -331,6 +378,15 @@ const tabsHTML = () => {
 
 function renderPacks() {
   const wrap = $('#packs-wrap'); if (!wrap || cur().name !== 'game') return;
+  if (!isPubg()) {
+    const g = gameOf(S.game), needRegion = g.regions && g.regions.length;
+    const body = needRegion && !S.region ? `<div class="notice">${ic('alert', 'sm')}<span>${t('pick_region_first')}</span></div>`
+      : !S.gpacks ? `<div class="packs" id="packs">${Array.from({ length: 6 }, () => '<div class="skeleton"></div>').join('')}</div>`
+      : `<div class="packs" id="packs">${S.gpacks.map((p, i) => genCard(p, i)).join('')}</div>`;
+    wrap.innerHTML = `${regionHTML()}${body}`;
+    const on = wrap.querySelector('.tabchip.on'); if (on && on.scrollIntoView) on.scrollIntoView({ inline: 'center', block: 'nearest' });
+    return;
+  }
   const list = S.tab === 'uc' ? S.ucOptions : S.packs.filter((p) => p.section === S.tab);
   wrap.innerHTML = `${tabsHTML()}<div class="packs" id="packs">${list.map((p, i) => packCard(p, i)).join('')}</div>`;
   const active = wrap.querySelector('.tabchip.on'); if (active && active.scrollIntoView) active.scrollIntoView({ inline: 'center', block: 'nearest' });
@@ -352,20 +408,38 @@ function hoistCta() {
 new MutationObserver(hoistCta).observe(document.getElementById('view'), { childList: true, subtree: true });
 
 screens.game = () => {
-  const co = S.co;
+  const co = S.co, g = gameOf(S.game), pubg = isPubg();
+  const chips = pubg
+    ? `<span>${ic('globe', 'sm')}Global</span><span>${ic('id', 'sm')}Player ID</span><span>${ic('bolt', 'sm')}${t('trust_fast')}</span>`
+    : `<span>${ic(idKind() ? 'send' : 'id', 'sm')}${idKind() ? 'Telegram' : 'Player ID'}</span><span>${ic('bolt', 'sm')}${t('trust_fast')}</span>`;
   return `${stepper(1)}
   <section class="gbanner">
-    <div class="gbanner-bg" style="background-image:url(assets/games/pubg.webp)"></div>
-    <div class="gbanner-art">${ucImg(4)}</div>
-    <div class="gbanner-in">${gameIcon('pubg', 'PUBG Mobile')}
-      <div><h2>PUBG Mobile</h2>
-        <div class="gchips"><span>${ic('globe', 'sm')}Global</span><span>${ic('id', 'sm')}Player ID</span><span>${ic('bolt', 'sm')}${t('trust_fast')}</span></div></div></div>
+    <div class="gbanner-bg" style="background-image:url(assets/games/${esc(g.id)}.webp)"></div>
+    ${pubg ? `<div class="gbanner-art">${ucImg(4)}</div>` : ''}
+    <div class="gbanner-in">${gameIcon(g.id, g.name)}
+      <div><h2>${esc(g.name)}</h2>
+        <div class="gchips">${chips}</div></div></div>
   </section>
   <div class="cur-row"><span>${ic('card', 'sm')}${t('currency_label')}</span>${curSeg()}</div>
   <div id="packs-wrap"><div class="packs" id="packs">${Array.from({ length: 6 }, () => '<div class="skeleton"></div>').join('')}</div></div>
   ${cta(co.pack ? money(priceOf(co.pack)) : '', t('continue'), !co.pack, 'next', !co.pack)}`;
 };
+async function loadGenPacks() {
+  const g = gameOf(S.game);
+  if (g.regions && g.regions.length && !S.region) { renderPacks(); return; }
+  S.gpacks = null; renderPacks();
+  const want = `${S.game}|${S.region}`;
+  try {
+    const r = await api(`/games/${S.game}/packs${S.region ? '?region=' + encodeURIComponent(S.region) : ''}`);
+    if (`${S.game}|${S.region}` !== want) return; // the customer switched server meanwhile
+    S.gpacks = r.packs; renderPacks();
+  } catch (e) {
+    const w = $('#packs-wrap'); if (!w) return;
+    w.innerHTML = `${regionHTML()}<div class="errbox" id="packs"><h3>${t('err_catalog')}</h3><button class="btn ghost" data-act="retry-packs">${t('retry')}</button></div>`;
+  }
+}
 after.game = async () => {
+  if (!isPubg()) return loadGenPacks();
   try {
     if (!S.packs) {
       const r = await api('/games/pubg/packs');
@@ -385,17 +459,22 @@ const vboxHTML = () => {
   const co = S.co;
   if (co.vstate === 'checking') return `<div class="vcard wait"><div class="badge"><div class="spinner"></div></div><div class="msg">${t('checking')}</div></div>`;
   if (co.vstate === 'valid') return `<div class="vcard ok"><div class="badge">${ic('check')}</div><div><div class="small">${t('account_found')}</div><div class="big">${esc(co.nick || '—')}</div></div></div>`;
-  if (co.vstate === 'invalid') return `<div class="vcard bad"><div class="badge">${ic('x')}</div><div class="msg">${t('id_not_found')}</div></div>`;
+  if (co.vstate === 'invalid') return `<div class="vcard bad"><div class="badge">${ic('x')}</div><div class="msg">${t(idKind() ? 'username_bad' : 'id_not_found')}</div></div>`;
   if (co.vstate === 'error') return `<div class="vcard bad"><div class="badge">${ic('alert')}</div><div class="msg">${t('err_validation')} <button style="color:var(--info);font-weight:700;text-decoration:underline" data-act="revalidate">${t('retry')}</button></div></div>`;
   return '';
 };
 // 'unverified' = the supplier cannot look an ID up. Then the customer types the ID a second time and both must match.
-const idOk = () => S.co.vstate === 'valid' || (S.co.vstate === 'unverified' && S.co.confirm === S.co.pid);
+const normId = (v) => (idKind() ? String(v).replace(/^@/, '').toLowerCase() : String(v)); // Telegram usernames ignore case and the @
+const idOk = () => S.co.vstate === 'valid' || (S.co.vstate === 'unverified' && S.co.confirm !== '' && normId(S.co.confirm) === normId(S.co.pid));
+const cleanId = (v) => (idKind() ? v.replace(/[^A-Za-z0-9_@]/g, '').slice(0, 33) : v.replace(/\D/g, '').slice(0, 14));
+const idAttrs = () => (idKind() ? 'inputmode="text" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="33"' : 'inputmode="numeric" maxlength="14"');
+const idPlaceholder = () => t(idKind() ? 'tg_username_ph' : 'id_placeholder');
 const confirmState = () => {
   const { pid, confirm } = S.co;
   if (!confirm) return 'empty';
-  if (confirm === pid) return 'match';
-  return pid.startsWith(confirm) ? 'typing' : 'mismatch'; // a shorter prefix is just not finished yet
+  const a = normId(confirm), b = normId(pid);
+  if (a === b) return 'match';
+  return b.startsWith(a) ? 'typing' : 'mismatch'; // a shorter prefix is just not finished yet
 };
 const confirmHint = () => ({
   empty: t('id_confirm_hint'), typing: t('id_confirm_hint'),
@@ -404,17 +483,17 @@ const confirmHint = () => ({
 const confirmClass = () => ({ match: 'ok', mismatch: 'bad' }[confirmState()] || '');
 const confirmTrail = () => (confirmState() === 'match' ? `<span style="color:var(--ok)">${ic('check')}</span>` : '');
 const cboxHTML = () => (S.co.vstate !== 'unverified' ? '' : `
-  <label class="field-label" for="cpid">${t('id_confirm_label')}</label>
+  <label class="field-label" for="cpid">${t(idKind() ? 'tg_confirm_label' : 'id_confirm_label')}</label>
   <div class="field ${confirmClass()}" id="cfield">
-    <span class="lead">${ic('id')}</span>
-    <input id="cpid" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="${t('id_placeholder')}" value="${esc(S.co.confirm)}">
+    <span class="lead">${ic(idKind() ? 'send' : 'id')}</span>
+    <input id="cpid" ${idAttrs()} autocomplete="off" placeholder="${idPlaceholder()}" value="${esc(S.co.confirm)}">
     <span class="trail" id="ctrail">${confirmTrail()}</span>
   </div>
   <div class="chint" id="chint">${confirmHint()}</div>`);
 function bindConfirm() {
   const c = $('#cpid'); if (!c) return;
   c.addEventListener('input', () => {
-    const v = c.value.replace(/\D/g, '').slice(0, 14);
+    const v = cleanId(c.value);
     c.value = v; S.co.confirm = v;
     $('#cfield').className = 'field ' + confirmClass();
     $('#ctrail').innerHTML = confirmTrail();
@@ -428,27 +507,27 @@ const trailHTML = () => (S.co.vstate === 'checking' ? '<div class="spinner"></di
 
 screens.id = () => {
   const co = S.co;
-  const saved = S.savedIds.filter((s) => s.game === 'pubg');
+  const saved = S.savedIds.filter((s) => s.game === S.game);
   return `${stepper(2)}
   <div class="card mini-sum">${thumbHTML(co.pack)}
     <div class="t">${esc(packTitle(co.pack))}${co.pack.custom ? `<small>${esc(breakdown(co.pack.items))}</small>` : ''}</div><div class="p">${money(priceOf(co.pack))}</div></div>
-  <label class="field-label" for="pid">${t('player_id')}</label>
+  <label class="field-label" for="pid">${t(idKind() ? 'tg_username' : 'player_id')}</label>
   <div class="field ${fieldClass()}" id="field">
-    <span class="lead">${ic('id')}</span>
-    <input id="pid" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="${t('id_placeholder')}" value="${esc(co.pid)}">
+    <span class="lead">${ic(idKind() ? 'send' : 'id')}</span>
+    <input id="pid" ${idAttrs()} autocomplete="off" placeholder="${idPlaceholder()}" value="${esc(co.pid)}">
     <span class="trail" id="trail">${trailHTML()}</span>
   </div>
   <div class="vbox ${co.vstate === 'unverified' ? 'slim' : ''}" id="vbox">${vboxHTML()}</div>
   <div id="cbox">${cboxHTML()}</div>
-  ${saved.length ? `<div class="chips">${saved.map((s) => `<button class="chip" data-act="use-id" data-pid="${esc(s.player_id)}">${ic('id', 'sm')}${esc(s.nick || s.player_id)}${s.nick ? `<small>${esc(s.player_id)}</small>` : ''}</button>`).join('')}</div>` : ''}
+  ${saved.length ? `<div class="chips">${saved.map((s) => `<button class="chip" data-act="use-id" data-pid="${esc(s.player_id)}">${ic(idKind() ? 'send' : 'id', 'sm')}${esc(s.nick || shownId(s.player_id, kindOf()))}${s.nick ? `<small>${esc(s.player_id)}</small>` : ''}</button>`).join('')}</div>` : ''}
   <button class="check ${co.save ? 'on' : ''}" id="savechk" data-act="toggle-save"><span class="box">${ic('check')}</span>${t('save_id')}</button>
-  <details class="help"><summary>${ic('help', 'sm')}${t('where_id')}</summary><p>${t('where_id_a')}</p></details>
+  <details class="help"><summary>${ic('help', 'sm')}${t(idKind() ? 'where_tg' : 'where_id')}</summary><p>${t(idKind() ? 'where_tg_a' : 'where_id_a')}</p></details>
   ${cta(money(priceOf(co.pack)), t('continue'), !idOk(), 'next')}`;
 };
 after.id = () => {
   const input = $('#pid');
   input.addEventListener('input', () => {
-    const v = input.value.replace(/\D/g, '').slice(0, 14);
+    const v = cleanId(input.value);
     input.value = v;
     S.co.pid = v; S.co.nick = null;
     queueValidate();
@@ -480,12 +559,12 @@ function queueValidate() {
   clearTimeout(S.vtimer);
   S.vseq++;
   const co = S.co;
-  if (co.pid.length < 8) { co.vstate = 'idle'; refreshIdUI(); return; }
+  if (co.pid.replace(/^@/, '').length < (idKind() ? 5 : 8)) { co.vstate = 'idle'; refreshIdUI(); return; }
   co.vstate = 'checking'; refreshIdUI();
   const seq = S.vseq, pid = co.pid;
   S.vtimer = setTimeout(async () => {
     try {
-      const r = await api('/validate', { method: 'POST', body: { game: 'pubg', player_id: pid } });
+      const r = await api('/validate', { method: 'POST', body: { game: S.game, player_id: pid } });
       if (seq !== S.vseq) return;
       co.vstate = !r.valid ? 'invalid' : r.verified === false ? 'unverified' : 'valid'; co.nick = r.nick;
       notice(co.vstate === 'valid' ? 'success' : co.vstate === 'unverified' ? 'warning' : 'error');
@@ -501,21 +580,25 @@ function queueValidate() {
 /* ----- step 3: payment ----- */
 async function ensureOrder() {
   const co = S.co;
-  const key = co.pack ? `${co.pack.custom ? 'c' + co.pack.uc : co.pack.offer_id}|${co.pid}|${CUR}` : null;
+  const key = co.pack ? `${S.game}|${co.pack.region || ''}|${co.pack.custom ? 'c' + co.pack.uc : co.pack.offer_id}|${co.pid}|${CUR}` : null;
   if (co.order && co.order.status === 'awaiting_payment' && (!co.orderKey || co.orderKey === key)) return co.order;
   if (co.order && co.order.status === 'awaiting_payment') await api(`/orders/${co.order.id}/cancel`, { method: 'POST' }).catch(() => {});
-  co.order = await api('/orders', { method: 'POST', body: { game: 'pubg', ...(co.pack.custom ? { custom_uc: co.pack.uc } : { offer_id: co.pack.offer_id }), player_id: co.pid, confirm_id: co.confirm, save_id: co.save, currency: CUR } });
+  const what = isPubg() ? (co.pack.custom ? { custom_uc: co.pack.uc } : { offer_id: co.pack.offer_id }) : { offer_id: co.pack.offer_id, region: co.pack.region || '' };
+  co.order = await api('/orders', { method: 'POST', body: { game: S.game, ...what, player_id: co.pid, confirm_id: co.confirm, save_id: co.save, currency: CUR } });
   co.orderKey = key;
   if (co.save) api('/bootstrap').then((b) => { S.savedIds = b.saved_ids; }).catch(() => {});
   return co.order;
 }
 
-const summaryCard = (o) => `<div class="card sum-card">
+const summaryCard = (o) => {
+  const kind = gameOf(o.game || 'pubg').kind;
+  return `<div class="card sum-card">
   <div class="sum-row"><span>${t('product')}</span><b>${esc(orderTitle(o))}</b></div>
   ${breakdown(o.items) ? `<div class="sum-row"><span>${t('contents')}</span><b>${breakdown(o.items)}</b></div>` : ''}
-  <div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick || o.player_id || '—')}</b></div>
-  <div class="sum-row"><span>${t('player_id')}</span><b>${esc(o.player_id)}</b></div>
+  ${o.nick ? `<div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick)}</b></div>` : ''}
+  <div class="sum-row"><span>${t(kind === 'username' ? 'tg_username' : 'player_id')}</span><b>${esc(shownId(o.player_id, kind))}</b></div>
   <div class="sum-row total"><span>${t('to_pay')}</span><b>${money(o.amount, o.currency)}</b></div></div>`;
+};
 
 const timerText = (o) => {
   const left = Math.max(0, o.expires_at - Math.floor(Date.now() / 1000));
@@ -625,21 +708,21 @@ screens.order = () => {
     <h2>${t('hero_' + o.status)}</h2><p>${t('hero_' + o.status + '_sub')}</p>
   </div>
   <div class="oprod">
-    <div class="oprod-art">${packArt({ section: o.uc ? 'uc' : sectionOf(o.offer_id || ''), uc: o.uc, offer_id: o.offer_id, items: o.items })}</div>
-    <div class="oprod-tx"><b>${esc(orderTitle(o))}</b><span>→ ${esc(o.nick || o.player_id || '—')}</span></div>
+    <div class="oprod-art">${o.game && o.game !== 'pubg' ? genArt(o.game) : packArt({ section: o.uc ? 'uc' : sectionOf(o.offer_id || ''), uc: o.uc, offer_id: o.offer_id, items: o.items })}</div>
+    <div class="oprod-tx"><b>${esc(orderTitle(o))}</b><span>→ ${esc(whoOf(o))}</span></div>
   </div>
   ${tl}
   <div class="card sum-card mt">
     <div class="sum-row"><span>${t('order_no')}</span><b>${o.code}</b></div>
     <div class="sum-row"><span>${t('product')}</span><b>${esc(orderTitle(o))}</b></div>
     ${breakdown(o.items) ? `<div class="sum-row"><span>${t('contents')}</span><b>${breakdown(o.items)}</b></div>` : ''}
-    <div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick || o.player_id || '—')}</b></div>
-    <div class="sum-row"><span>${t('player_id')}</span><b>${esc(o.player_id)}</b></div>
+    ${o.nick ? `<div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick)}</b></div>` : ''}
+    <div class="sum-row"><span>${t(gameOf(o.game || 'pubg').kind === 'username' ? 'tg_username' : 'player_id')}</span><b>${esc(shownId(o.player_id, gameOf(o.game || 'pubg').kind))}</b></div>
     <div class="sum-row"><span>${t('date')}</span><b>${when(o.created_at)}</b></div>
     <div class="sum-row total"><span>${t('amount')}</span><b>${money(o.amount, o.currency)}</b></div></div>
   <div class="mt" style="display:grid;gap:10px">
     ${o.status === 'awaiting_payment' ? `<button class="btn gold block" data-act="resume-pay">${t('continue_pay')} ${ic('arrow', 'sm')}</button>` : ''}
-    ${['completed', 'cancelled', 'expired'].includes(o.status) ? `<button class="btn gold block" data-act="open-game" data-game="pubg">${t('buy_again')}</button>` : ''}
+    ${['completed', 'cancelled', 'expired'].includes(o.status) ? `<button class="btn gold block" data-act="open-game" data-game="${esc(o.game || 'pubg')}">${t('buy_again')}</button>` : ''}
     ${['failed', 'payment_review', 'processing', 'paid'].includes(o.status) && S.support ? `<button class="btn line block" data-act="contact">${ic('send', 'sm')}${t('contact_support')}</button>` : ''}
   </div>`;
 };
@@ -706,7 +789,7 @@ screens.profile = () => {
   <div class="stats"><div class="stat"><span>${t('stat_orders')}</span><b>${fmt(S.stats.orders)}</b></div>
     <div class="stat"><span>${t('stat_spent')}</span><b>${money(S.stats.spent.UZS || 0, 'UZS')}</b>${S.stats.spent.RUB ? `<b>${money(S.stats.spent.RUB, 'RUB')}</b>` : ''}</div></div>
   <h2 class="sec">${t('saved_ids')}</h2>
-  <div class="list">${saved.length ? saved.map((s) => `<div class="li">${ic('id')}<div class="grow"><div>${esc(s.nick || 'PUBG Mobile')}</div><div class="sub">PUBG Mobile · ${esc(s.player_id)}</div></div><button class="del" data-act="del-id" data-id="${s.id}" aria-label="delete">${ic('trash', 'sm')}</button></div>`).join('') : `<div class="li" style="color:var(--muted);font-size:13px">${t('no_saved')}</div>`}</div>
+  <div class="list">${saved.length ? saved.map((s) => `<div class="li">${ic('id')}<div class="grow"><div>${esc(s.nick || gameOf(s.game).name)}</div><div class="sub">${esc(gameOf(s.game).name)} · ${esc(shownId(s.player_id, gameOf(s.game).kind))}</div></div><button class="del" data-act="del-id" data-id="${s.id}" aria-label="delete">${ic('trash', 'sm')}</button></div>`).join('') : `<div class="li" style="color:var(--muted);font-size:13px">${t('no_saved')}</div>`}</div>
   <h2 class="sec">${t('settings')}</h2>
   <div class="list">
     <div class="li">${ic('card')}<div class="grow">${t('currency_label')}</div>${curSeg()}</div>
@@ -744,8 +827,11 @@ function render() {
 }
 
 /* ---------------------------------------------------------------- actions */
-function openGame() {
+function openGame(id = 'pubg') {
   S.co = freshCo();
+  S.game = id || 'pubg';
+  S.gpacks = null;
+  S.region = S.game === 'pubg' ? '' : savedRegion(S.game);
   S.tab = 'uc';
   S.stack = [{ name: 'home' }, { name: 'game' }];
   haptic('light'); render();
@@ -754,13 +840,25 @@ function openGame() {
 const actions = {
   tab: (el) => tab(el.dataset.tab),
   back: () => back(),
-  'open-game': () => openGame(),
+  'open-game': (el) => openGame(el && el.dataset && el.dataset.game),
   'goto-orders': () => tab('orders'),
-  'retry-packs': () => { S.packs = null; render(); },
+  'retry-packs': () => { S.packs = null; S.gpacks = null; render(); },
   'retry-orders': () => render(),
   'open-order': (el) => { S.viewOrder = null; go('order', { id: el.dataset.id }); },
+  'set-region': (el) => {
+    S.region = el.dataset.region; saveRegion(S.game, S.region);
+    S.co.pack = null; syncCta(); haptic('light'); loadGenPacks();
+  },
   'pick-pack': (el) => {
     const cur_ = S.co.pack;
+    if (!isPubg()) {
+      const same = cur_ && cur_.section === 'gen' && cur_.offer_id === el.dataset.offer;
+      const p = (S.gpacks || []).find((x) => x.offer_id === el.dataset.offer);
+      S.co.pack = same || !p ? null : { ...p, section: 'gen', game: S.game, region: S.region };
+      document.querySelectorAll('.pack').forEach((b) => b.classList.toggle('sel', !!S.co.pack && b === el));
+      haptic('light'); syncCta();
+      return;
+    }
     const same = cur_ && (el.dataset.uc ? cur_.section === 'uc' && cur_.uc === Number(el.dataset.uc) : cur_.offer_id === el.dataset.offer);
     if (same) { // tapping the chosen pack again un-selects it
       S.co.pack = null;
@@ -816,6 +914,7 @@ const actions = {
   },
   'resume-pay': () => {
     const o = S.viewOrder;
+    S.game = o.game || 'pubg';
     S.co = { ...freshCo(), order: o, pid: o.player_id, nick: o.nick };
     go('pay');
   },

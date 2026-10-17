@@ -9,7 +9,8 @@ from fastapi.staticfiles import StaticFiles
 
 from . import api, click, db, fulfillment, notify
 from .bot_handlers import dp
-from .pricing import pubg_packs, uc_options
+from .games import REGISTRY
+from .pricing import game_packs, pubg_packs, uc_options
 from .config import (
     ADMIN_IDS,
     CARD_NUMBER,
@@ -37,6 +38,12 @@ async def _warm_catalog() -> None:
         await asyncio.to_thread(uc_options, packs)  # builds the exact-amount table once
     except Exception as e:
         log.warning("could not pre-load the catalog: %s", e)
+    for g in REGISTRY.values():
+        if g.enabled and hasattr(fulfillment.supplier, "packs"):
+            try:
+                await game_packs(fulfillment.supplier, g, g.default_region)
+            except Exception as e:
+                log.warning("could not pre-load %s: %s", g.id, e)
 
 
 async def _log_supplier_report() -> None:
@@ -44,6 +51,13 @@ async def _log_supplier_report() -> None:
     try:
         for line in await fulfillment.supplier.probe():
             log.info("supplier: %s", re.sub(r"<[^>]+>", "", line))
+        for g in REGISTRY.values():  # what each game's pack parsing produced, to spot a changed product name at a glance
+            if g.enabled and hasattr(fulfillment.supplier, "packs"):
+                try:
+                    got = await game_packs(fulfillment.supplier, g, g.default_region)
+                    log.info("game %s (%s): %s", g.id, g.default_region or "-", ", ".join(f"{p['amount']}=${p['cost_usd']}" for p in got))
+                except Exception as e:
+                    log.warning("game %s: %s", g.id, e)
         if WDG_DISCOVER and hasattr(fulfillment.supplier, "discover"):
             for line in await fulfillment.supplier.discover(WDG_DISCOVER):
                 log.info("discover: %s", re.sub(r"<[^>]+>", "", line).replace("\n", " ¦ "))
