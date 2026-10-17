@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import time
 from contextlib import asynccontextmanager
 
 from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonWebApp, WebAppInfo
@@ -69,6 +70,46 @@ async def _log_supplier_report() -> None:
         log.warning("supplier report failed: %s", e)
 
 
+async def _supplier_monitor(interval: float = 60, rounds: int | None = None) -> None:
+    """Tells the admins when the supplier stops answering and when it answers again.
+
+    While it is down the shop refuses new orders by itself (the wallet check fails), so nobody pays for something we
+    cannot deliver; this only makes sure the owner knows. On recovery the catalogs are loaded again and the report is
+    written to the log (including any WDG_DISCOVER search that could not run while the supplier was away).
+    """
+    supplier = fulfillment.supplier
+    fails, down_since = 0, None
+    n = 0
+    while rounds is None or n < rounds:
+        n += 1
+        await asyncio.sleep(interval)
+        try:
+            await asyncio.wait_for(supplier.balance(), 45)
+            ok = True
+        except Exception:
+            ok = False
+        if ok:
+            fails = 0
+            if down_since is not None:
+                minutes = max(1, int((time.time() - down_since) / 60))
+                down_since = None
+                log.warning("%s answers again after about %d min", supplier.name, minutes)
+                await notify.admin_event("supplier_up", f"✅ <b>{supplier.name} yana ishlayapti</b> (taxminan {minutes} daqiqa to'xtab turdi). Buyurtmalar qayta ochildi.")
+                await _warm_catalog()
+                if hasattr(supplier, "probe"):
+                    await _log_supplier_report()
+        else:
+            fails += 1
+            if fails == 3 and down_since is None:  # three minutes in a row, not a blip
+                down_since = time.time() - 3 * interval
+                log.error("%s does not answer", supplier.name)
+                await notify.admin_event(
+                    "supplier_down",
+                    f"🚨 <b>{supplier.name} javob bermayapti</b> (3 daqiqadan beri).\n"
+                    "Yangi buyurtmalar o'z-o'zidan to'xtatildi, mijoz to'lab qolmaydi. Tiklanganda xabar beraman.",
+                )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if SUPPLIER == "wdg":
@@ -135,10 +176,12 @@ async def lifespan(app: FastAPI):
         log.warning("DEV_MODE is on: requests without Telegram initData are accepted. Never run like this in production.")
     await fulfillment.resume()
     warm = asyncio.create_task(_warm_catalog())
+    monitor = asyncio.create_task(_supplier_monitor())
     report = asyncio.create_task(_log_supplier_report()) if hasattr(fulfillment.supplier, "probe") else None  # noqa: F841
     try:
         yield
     finally:
+        monitor.cancel()
         if polling:
             polling.cancel()
         if notify.bot:
