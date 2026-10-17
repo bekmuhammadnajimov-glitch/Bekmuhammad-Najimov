@@ -212,10 +212,11 @@ class Wdg:
         if category is None:
             raise WdgError(404, f"{game.id} has no region {region!r}")
         best: dict[int, tuple[Decimal, int | str]] = {}
-        for p in await self._products(str(category)):
-            parsed = self._pack_of(game, p)
-            if parsed and (parsed[0] not in best or parsed[1] < best[parsed[0]][0]):
-                best[parsed[0]] = (parsed[1], p["id"])
+        for cid in category if isinstance(category, (tuple, list)) else (category,):  # several bundles are merged
+            for p in await self._products(str(cid)):
+                parsed = self._pack_of(game, p)
+                if parsed and (parsed[0] not in best or parsed[1] < best[parsed[0]][0]):
+                    best[parsed[0]] = (parsed[1], p["id"])
         if not best:
             raise WdgError(404, f"no purchasable {game.id} packs in WDG category {category}")
         return [

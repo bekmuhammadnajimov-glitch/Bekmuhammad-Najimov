@@ -19,7 +19,7 @@ class Game:
     name: str
     unit: str  # the app translates it: "stars", "diamonds", "months"
     recipient: str  # "id": a numeric player ID, "username": a Telegram @username
-    categories: dict  # region code -> WDG category id; {"": id} when the game has no regions
+    categories: dict  # region code -> WDG category id (or a tuple of ids, merged: the cheapest product per amount wins); {"": id} when the game has no regions
     pick: re.Pattern  # matches a product name; group 1 is the amount
     band: tuple  # (low, high): believable USD cost per unit. A price outside it is a placeholder or another product
     label: str  # how the pack is named in orders and in the bot, e.g. "{amount} Stars"
@@ -86,9 +86,9 @@ REGISTRY: dict[str, Game] = {
             label="{amount} FC Points · {region}", default_region="ID", regions=("ID", "MY", "SG", "KH"),
         ),
         Game(
-            id="roblox", name="Roblox", unit="robux", recipient="none", delivery="code", categories={"": 2559},
+            id="roblox", name="Roblox", unit="robux", recipient="none", delivery="code", categories={"": (2559, 706)},  # US and Global
             pick=re.compile(r"^(\d+)\s+Robux$", re.I), band=(Decimal("0.005"), Decimal("0.05")),
-            label="{amount} Robux (kod)", allow=frozenset({300, 500, 700, 1000, 2500, 5250, 11000}), min_stock=10,
+            label="{amount} Robux (kod)", min_stock=2,  # a pack with a single code left is hidden until it is restocked
             redeem_url="https://www.roblox.com/redeem",
         ),
     )

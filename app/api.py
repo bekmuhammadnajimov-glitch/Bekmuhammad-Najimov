@@ -37,6 +37,11 @@ GAMES = [
     {"id": "genshin", "name": "Genshin Impact", "currency": "Crystals", "active": False},
     {"id": "honor_of_kings", "name": "Honor of Kings", "currency": "Tokens", "active": False},
     {"id": "steam", "name": "Steam", "currency": "", "active": False},
+    {"id": "clash_royale", "name": "Clash Royale", "currency": "Gems", "active": False},
+    {"id": "clash_of_clans", "name": "Clash of Clans", "currency": "Gems", "active": False},
+    {"id": "brawl_stars", "name": "Brawl Stars", "currency": "Gems", "active": False},
+    {"id": "efootball", "name": "eFootball", "currency": "Coins", "active": False},
+    {"id": "dream_league", "name": "Dream League Soccer", "currency": "Coins", "active": False},
 ]
 
 _ID_RE = re.compile(r"\d{5,14}")

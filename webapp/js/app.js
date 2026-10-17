@@ -338,7 +338,7 @@ screens.home = () => {
     <span class="go">${ic('arrow')}</span>
   </button>
   ${live.length ? `<div class="games-live">${live.map(liveCard).join('')}</div>` : ''}
-  <div class="games-soon">${soon.slice(0, 6).map((g) => `<div class="game-soon">${gameIcon(g.id, g.name)}<div class="name">${esc(g.name)}</div><span class="pill">${t('soon')}</span></div>`).join('')}</div>
+  <div class="games-soon">${soon.slice(0, 18).map((g) => `<div class="game-soon">${gameIcon(g.id, g.name)}<div class="name">${esc(g.name)}</div><span class="pill">${t('soon')}</span></div>`).join('')}</div>
 
   ${S.recent.length ? `<h2 class="sec"><span>${t('recent')}</span><button class="link" data-act="tab" data-tab="orders">${t('all')}</button></h2>${S.recent.map(orderRow).join('')}` : ''}`;
 };
