@@ -21,7 +21,6 @@ from .config import (
     INCOMING_SECRET,
     PAYMENT_TTL_MIN,
     PUBG_VALIDATE_CATEGORY,
-    SUPPORT_USERNAME,
     provider_for,
 )
 from .games import REGISTRY
@@ -282,7 +281,7 @@ async def bootstrap(user: dict = Depends(current_user)):
         "games": _games_view(from_price, from_price_rub),
         "saved_ids": ids,
         "leaderboard": await _leaderboard(user["tg_id"]),
-        "support_username": SUPPORT_USERNAME,
+        "support_username": await notify.support_username(),
         "payment_provider": {c: provider_for(c) for c in CURRENCIES},
     }
 
@@ -481,6 +480,7 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
             first_offer = pack["offer_id"]
 
     if not await _wallet_covers(cost_usd):
+        await notify.wallet_short(user["tg_id"], title)  # the bot sends the admin's profile; the app shows the same
         raise HTTPException(503, "unavailable")
 
     if g is not None:

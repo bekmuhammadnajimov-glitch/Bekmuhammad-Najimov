@@ -1,5 +1,6 @@
 import html
 import logging
+import time
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
@@ -7,7 +8,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
 from . import db
-from .config import ADMIN_IDS, BOT_TOKEN, BOT_USERNAME
+from .config import ADMIN_IDS, BOT_TOKEN, BOT_USERNAME, SUPPORT_USERNAME
 from .games import REGISTRY
 
 log = logging.getLogger("nexdonate.notify")
@@ -64,6 +65,10 @@ MSG = {
         "uz": "✅ <b>Buyurtma yetkazildi!</b>\n{title}\n\n🔑 Kodingiz:\n{codes}\n{redeem}\nBuyurtma <code>{code}</code>\n\nKodni hech kimga bermang. Xaridingiz uchun rahmat! 🙌",
         "ru": "✅ <b>Заказ доставлен!</b>\n{title}\n\n🔑 Ваш код:\n{codes}\n{redeem}\nЗаказ <code>{code}</code>\n\nНикому не передавайте код. Спасибо за покупку! 🙌",
     },
+    "wallet_short": {
+        "uz": "⚠️ <b>Hozir buyurtmani bajarib bo'lmaydi</b>\nHozir bot <b>{title}</b> tashlab bera olmaydi. Iltimos, admin bilan bog'lanib, qayta sinab ko'ring 👇",
+        "ru": "⚠️ <b>Сейчас заказ выполнить нельзя</b>\nСейчас бот не может отправить <b>{title}</b>. Пожалуйста, свяжитесь с админом и попробуйте снова 👇",
+    },
     "failed": {
         "uz": "❗️ <b>Buyurtma bajarilmadi</b>\nBuyurtma <code>{code}</code> bo'yicha texnik muammo yuz berdi. Administrator buni ko'rib chiqadi — iltimos, qo'llab-quvvatlashga yozing.",
         "ru": "❗️ <b>Заказ не выполнен</b>\nПо заказу <code>{code}</code> возникла техническая проблема. Администратор разберётся — пожалуйста, напишите в поддержку.",
@@ -91,6 +96,40 @@ async def send_user(order: dict, key: str, codes: list[str] | None = None) -> No
         await bot.send_message(order["tg_id"], text)
     except Exception as e:  # user blocked the bot, etc.
         log.warning("send_user failed for %s: %s", order["tg_id"], e)
+
+
+async def support_username() -> str:
+    """Whom customers write to: SUPPORT_USERNAME, else the Telegram username of the first admin (they have used the bot, so it is on file)."""
+    if SUPPORT_USERNAME:
+        return SUPPORT_USERNAME
+    for admin in ADMIN_IDS:
+        row = await db.fetchone("SELECT username FROM users WHERE tg_id = ?", (admin,))
+        if row and row["username"]:
+            return row["username"]
+    return ""
+
+
+_short_sent: dict[int, float] = {}  # tg_id -> when a customer was last told the wallet cannot cover their order
+
+
+async def wallet_short(tg_id: int, title: str) -> None:
+    """The supplier wallet cannot pay for what the customer wants: instead of payment details the bot sends them the admin's
+    profile and asks them to write there. The owner hears who was turned away. Once a minute per customer."""
+    now = time.time()
+    if now - _short_sent.get(tg_id, 0) < 60:
+        return
+    _short_sent[tg_id] = now
+    await admin_event("wallet_refused", f"🚫 <b>Mijozga hamyon yetmadi, admin bilan bog'lanishi aytildi</b>\n{html.escape(title)}", tg_id=tg_id)
+    if not bot:
+        return
+    lang = await _lang(tg_id)
+    kb, admin = None, await support_username()
+    if admin:  # opens the owner's Telegram profile
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text={"uz": "💬 Admin", "ru": "💬 Админ"}[lang], url=f"https://t.me/{admin}")]])
+    try:
+        await bot.send_message(tg_id, MSG["wallet_short"][lang].format(title=html.escape(title)), reply_markup=kb)
+    except Exception as e:  # user blocked the bot, etc.
+        log.warning("wallet_short failed for %s: %s", tg_id, e)
 
 
 def _admin_order_text(order: dict, title: str) -> str:

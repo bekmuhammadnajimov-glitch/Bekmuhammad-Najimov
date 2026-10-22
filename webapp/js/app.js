@@ -707,7 +707,8 @@ after.pay = async () => {
   } catch (e) {
     const box = $('#paybox'); if (!box) return;
     const pending = e.code === 'too_many_pending';
-    box.innerHTML = `<div class="errbox"><h3>${errText(e)}</h3><button class="btn ghost" data-act="${pending ? 'goto-orders' : 'back'}">${pending ? t('tab_orders') : t('back')}</button></div>`;
+    const noMoney = e.code === 'unavailable' && S.support; // the supplier wallet cannot cover it: the bot has also sent the admin's profile
+    box.innerHTML = `<div class="errbox"><h3>${errText(e)}</h3>${noMoney ? `<button class="btn gold" data-act="contact">${ic('send', 'sm')} ${t('contact_admin')}</button>` : ''}<button class="btn ghost" data-act="${pending ? 'goto-orders' : 'back'}">${pending ? t('tab_orders') : t('back')}</button></div>`;
   }
 };
 function bindReceipt() {

@@ -416,6 +416,8 @@ details.faq p { padding: 0 16px 16px; font-size: 13.5px; line-height: 1.65; colo
 .errbox { text-align: center; padding: 70px 24px; }
 .errbox h3 { font-size: 19px; font-weight: 800; margin-bottom: 10px; }
 .errbox p { font-size: 13.5px; color: var(--muted); line-height: 1.6; margin-bottom: 22px; font-weight: 500; }
+.errbox h3 + .btn { margin-top: 16px; }
+.errbox .btn + .btn { margin-top: 10px; }
 .mt { margin-top: 14px; }
 
 /* =====================================================================
