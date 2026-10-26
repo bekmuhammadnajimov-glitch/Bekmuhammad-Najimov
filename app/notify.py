@@ -115,10 +115,10 @@ _short_sent: dict[int, float] = {}  # tg_id -> when a customer was last told the
 
 def _want_text(lang: str, game: str, title: str, recipient: str) -> str:
     """What the customer's first message to the admin says: what they wanted to buy, typed for them."""
-    who = f" ID: {recipient}" if recipient else ""
+    who = f"\nID: {recipient}" if recipient else ""
     if lang == "ru":
-        return f"Здравствуйте! Хочу купить {game}: {title}. Бот сейчас не смог отправить.{who}"
-    return f"Salom! {game}: {title} olmoqchiman. Bot hozir yubora olmadi.{who}"
+        return f"🖐Здравствуйте!\n💸Хочу купить {game}: {title}.\nБот сейчас не смог отправить.{who}"
+    return f"🖐Salom!\n💸{game}: {title} olmoqchiman.\nBot hozir yubora olmadi.{who}"
 
 
 async def wallet_short(tg_id: int, title: str, game: str = "", recipient: str = "") -> None:
