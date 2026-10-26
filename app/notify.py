@@ -1,6 +1,7 @@
 import html
 import logging
 import time
+from urllib.parse import quote
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
@@ -66,8 +67,8 @@ MSG = {
         "ru": "✅ <b>Заказ доставлен!</b>\n{title}\n\n🔑 Ваш код:\n{codes}\n{redeem}\nЗаказ <code>{code}</code>\n\nНикому не передавайте код. Спасибо за покупку! 🙌",
     },
     "wallet_short": {
-        "uz": "⚠️ <b>Hozir buyurtmani bajarib bo'lmaydi</b>\nHozir bot <b>{title}</b> tashlab bera olmaydi. Iltimos, admin bilan bog'lanib, qayta sinab ko'ring 👇",
-        "ru": "⚠️ <b>Сейчас заказ выполнить нельзя</b>\nСейчас бот не может отправить <b>{title}</b>. Пожалуйста, свяжитесь с админом и попробуйте снова 👇",
+        "uz": "⚠️ <b>Hozir buyurtmani bajarib bo'lmaydi</b>\nHozir bot <b>{title}</b> tashlab bera olmaydi. «Admin» tugmasini bosing: xabar o'zi yoziladi, shunchaki yuboring. Admin buyurtmangizni qo'lda bajaradi 👇",
+        "ru": "⚠️ <b>Сейчас заказ выполнить нельзя</b>\nСейчас бот не может отправить <b>{title}</b>. Нажмите «Админ»: сообщение напишется само, просто отправьте его. Админ выполнит заказ вручную 👇",
     },
     "failed": {
         "uz": "❗️ <b>Buyurtma bajarilmadi</b>\nBuyurtma <code>{code}</code> bo'yicha texnik muammo yuz berdi. Administrator buni ko'rib chiqadi — iltimos, qo'llab-quvvatlashga yozing.",
@@ -112,11 +113,19 @@ async def support_username() -> str:
 _short_sent: dict[int, float] = {}  # tg_id -> when a customer was last told the wallet cannot cover their order
 
 
-async def wallet_short(tg_id: int, title: str) -> None:
-    """The supplier wallet cannot pay for what the customer wants: instead of payment details the bot sends them the admin's
-    profile and asks them to write there. The owner hears who was turned away. Once a minute per customer."""
+def _want_text(lang: str, game: str, title: str, recipient: str) -> str:
+    """What the customer's first message to the admin says: what they wanted to buy, typed for them."""
+    who = f" ID: {recipient}" if recipient else ""
+    if lang == "ru":
+        return f"Здравствуйте! Хочу купить {game}: {title}. Бот сейчас не смог отправить.{who}"
+    return f"Salom! {game}: {title} olmoqchiman. Bot hozir yubora olmadi.{who}"
+
+
+async def wallet_short(tg_id: int, title: str, game: str = "", recipient: str = "") -> None:
+    """The supplier wallet cannot pay for what the customer wants: instead of payment details the bot sends them a button that opens
+    the admin's chat with the request already typed (what, how much, for which ID). The owner hears who was turned away."""
     now = time.time()
-    if now - _short_sent.get(tg_id, 0) < 60:
+    if now - _short_sent.get(tg_id, 0) < 15:
         return
     _short_sent[tg_id] = now
     await admin_event("wallet_refused", f"🚫 <b>Mijozga hamyon yetmadi, admin bilan bog'lanishi aytildi</b>\n{html.escape(title)}", tg_id=tg_id)
@@ -125,7 +134,8 @@ async def wallet_short(tg_id: int, title: str) -> None:
     lang = await _lang(tg_id)
     kb, admin = None, await support_username()
     if admin:  # opens the owner's Telegram profile
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text={"uz": "💬 Admin", "ru": "💬 Админ"}[lang], url=f"https://t.me/{admin}")]])
+        link = f"https://t.me/{admin}?text={quote(_want_text(lang, game or 'NexDonate', title, recipient))}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text={"uz": "💬 Admin", "ru": "💬 Админ"}[lang], url=link)]])
     try:
         await bot.send_message(tg_id, MSG["wallet_short"][lang].format(title=html.escape(title)), reply_markup=kb)
     except Exception as e:  # user blocked the bot, etc.

@@ -282,6 +282,7 @@ async def bootstrap(user: dict = Depends(current_user)):
         "saved_ids": ids,
         "leaderboard": await _leaderboard(user["tg_id"]),
         "support_username": await notify.support_username(),
+        "bot_url": f"https://t.me/{notify.bot_username}" if notify.bot_username else "",
         "payment_provider": {c: provider_for(c) for c in CURRENCIES},
     }
 
@@ -480,7 +481,12 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
             first_offer = pack["offer_id"]
 
     if not await _wallet_covers(cost_usd):
-        await notify.wallet_short(user["tg_id"], title)  # the bot sends the admin's profile; the app shows the same
+        if g is not None:  # the bot sends the customer a button to the admin with this request typed; the app jumps into the bot chat
+            mine = g.normalize(body.player_id)
+            who = "" if not mine else ("@" + mine if g.recipient == "username" else mine)
+        else:
+            who = body.player_id.strip() if re.fullmatch(r"\d{5,14}", body.player_id.strip()) else ""
+        await notify.wallet_short(user["tg_id"], title, g.name if g is not None else "PUBG Mobile", who)
         raise HTTPException(503, "unavailable")
 
     if g is not None:

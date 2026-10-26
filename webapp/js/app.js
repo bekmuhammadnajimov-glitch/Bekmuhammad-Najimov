@@ -707,8 +707,12 @@ after.pay = async () => {
   } catch (e) {
     const box = $('#paybox'); if (!box) return;
     const pending = e.code === 'too_many_pending';
-    const noMoney = e.code === 'unavailable' && S.support; // the supplier wallet cannot cover it: the bot has also sent the admin's profile
-    box.innerHTML = `<div class="errbox"><h3>${errText(e)}</h3>${noMoney ? `<button class="btn gold" data-act="contact">${ic('send', 'sm')} ${t('contact_admin')}</button>` : ''}<button class="btn ghost" data-act="${pending ? 'goto-orders' : 'back'}">${pending ? t('tab_orders') : t('back')}</button></div>`;
+    if (e.code === 'unavailable' && S.botUrl) {  // the supplier wallet cannot cover it: the bot has just sent the customer the way to the admin, so go there like for a payment
+      box.innerHTML = `<div class="errbox"><h3>${t('to_bot')}</h3></div>`;
+      goBot(S.botUrl);
+      return;
+    }
+    box.innerHTML = `<div class="errbox"><h3>${errText(e)}</h3><button class="btn ghost" data-act="${pending ? 'goto-orders' : 'back'}">${pending ? t('tab_orders') : t('back')}</button></div>`;
   }
 };
 function bindReceipt() {
@@ -1059,7 +1063,7 @@ async function boot() {
   try {
     const b = await api('/bootstrap');
     S.user = b.user; S.stats = b.stats; S.games = b.games; S.savedIds = b.saved_ids; S.lb = b.leaderboard;
-    S.support = b.support_username; S.provider = b.payment_provider;
+    S.support = b.support_username; S.provider = b.payment_provider; S.botUrl = b.bot_url || '';
     lang = b.user.lang || 'uz';
     if (b.user.currency === 'UZS' || b.user.currency === 'RUB') { CUR = b.user.currency; try { localStorage.setItem(CUR_KEY, CUR); } catch (_) {} }
     document.documentElement.lang = lang;

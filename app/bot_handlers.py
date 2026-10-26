@@ -13,6 +13,7 @@ from aiogram.types import (
 )
 
 from . import api, db, fulfillment, notify, payments
+from .games import REGISTRY
 from .config import (
     ADMIN_IDS,
     CARD_BANK,
@@ -216,7 +217,9 @@ async def _show_payment(message: Message, order_id: str) -> None:
         return await message.answer(t["pay_expired"], reply_markup=_main_kb(lang))
     if not await api._wallet_covers(0):  # the supplier wallet is not what it was when the order was taken (this order counts as waiting)
         await db.update_order(order_id, status="cancelled")  # so it stops holding money back from others
-        return await notify.wallet_short(message.from_user.id, order["offer_name"] or "")
+        g = REGISTRY.get(order["game"])
+        who = "" if (g and g.delivery == "code") else (("@" if g and g.recipient == "username" else "") + (order["player_id"] or ""))
+        return await notify.wallet_short(message.from_user.id, order["offer_name"] or "", g.name if g else "PUBG Mobile", who)
     card, card_info = _card_for(order["currency"])
     if not card:
         await notify.admin_event("config", f"⚠️ <b>{order['currency']} uchun karta kiritilmagan</b>, mijoz to'lay olmadi · {db.code(order_id)}", order)
