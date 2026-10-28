@@ -4,7 +4,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 
-from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonWebApp, WebAppInfo
+from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonDefault
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
@@ -110,6 +110,15 @@ async def _supplier_monitor(interval: float = 60, rounds: int | None = None) -> 
                 )
 
 
+async def _restore_menus() -> None:
+    """Everybody who already has a chat with the bot gets the Mini App button back (it used to be the same for all chats).
+    The admins are left out: when they clear their chat they see the START button like a new customer."""
+    for row in await db.fetchall("SELECT tg_id FROM users"):
+        if row["tg_id"] not in ADMIN_IDS:
+            await notify.ensure_menu(row["tg_id"])
+            await asyncio.sleep(0.1)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if SUPPLIER == "wdg":
@@ -132,12 +141,12 @@ async def lifespan(app: FastAPI):
     polling = None
     if notify.bot:
         if WEBAPP_URL:
-            try:
-                await notify.bot.set_chat_menu_button(
-                    menu_button=MenuButtonWebApp(text="NexDonate", web_app=WebAppInfo(url=WEBAPP_URL))
-                )
+            try:  # Telegram's own menu: a person who opens the bot for the first time sees the START button; the Mini App button is set per chat after START
+                await notify.bot.set_chat_menu_button(menu_button=MenuButtonDefault())
             except Exception as e:
                 log.warning("could not set menu button: %s", e)
+            menus = asyncio.create_task(_restore_menus())  # customers who started before this change keep their Mini App button
+            menus.add_done_callback(lambda t: t.exception() and log.warning("restoring menu buttons failed: %s", t.exception()))
         try:
             click.bot_username = notify.bot_username = (await notify.bot.get_me()).username  # for Click's return link and the pay links
         except Exception as e:

@@ -83,6 +83,7 @@ async def _touch(tg_user) -> None:
     if await db.touch_user(tg_user):
         nick = f" @{html.escape(tg_user.username)}" if tg_user.username else ""
         await notify.admin_event("new_user", f"👤 <b>Yangi foydalanuvchi</b>{nick}", tg_id=tg_user.id)
+    await notify.ensure_menu(tg_user.id)  # after START the Mini App button appears next to the message field
 
 async def _user_row(tg_id: int) -> dict | None:
     return await db.fetchone("SELECT * FROM users WHERE tg_id = ?", (tg_id,))
