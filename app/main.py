@@ -4,7 +4,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 
-from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonDefault
+from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonCommands, MenuButtonDefault
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
@@ -17,6 +17,7 @@ from .config import (
     CARD_NUMBER,
     CARD_RUB_NUMBER,
     CLICK_READY,
+    DATA_DIR,
     DEV_MODE,
     FULFILLMENT_MODE,
     PAYMENT_PROVIDER,
@@ -26,7 +27,6 @@ from .config import (
     WDG_DUMP,
     WDG_PUBG_CATEGORY_ID,
     WEBAPP_DIR,
-    WEBAPP_URL,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -110,13 +110,18 @@ async def _supplier_monitor(interval: float = 60, rounds: int | None = None) -> 
                 )
 
 
-async def _restore_menus() -> None:
-    """Everybody who already has a chat with the bot gets the Mini App button back (it used to be the same for all chats).
-    The admins are left out: when they clear their chat they see the START button like a new customer."""
+async def _reset_chat_menus() -> None:
+    """Earlier versions gave each chat its own Mini App button. Put every known chat back on the bot's menu (commands), once."""
+    marker = DATA_DIR / "menu_reset_v1"
+    if marker.exists():
+        return
     for row in await db.fetchall("SELECT tg_id FROM users"):
-        if row["tg_id"] not in ADMIN_IDS:
-            await notify.ensure_menu(row["tg_id"])
-            await asyncio.sleep(0.1)
+        try:
+            await notify.bot.set_chat_menu_button(chat_id=row["tg_id"], menu_button=MenuButtonDefault())
+        except Exception as e:  # blocked the bot, etc.
+            log.warning("could not reset the menu button of %s: %s", row["tg_id"], e)
+        await asyncio.sleep(0.1)
+    marker.write_text("done")
 
 
 @asynccontextmanager
@@ -140,25 +145,25 @@ async def lifespan(app: FastAPI):
     await db.init()
     polling = None
     if notify.bot:
-        if WEBAPP_URL:
-            try:  # Telegram's own menu: a person who opens the bot for the first time sees the START button; the Mini App button is set per chat after START
-                await notify.bot.set_chat_menu_button(menu_button=MenuButtonDefault())
-            except Exception as e:
-                log.warning("could not set menu button: %s", e)
-            menus = asyncio.create_task(_restore_menus())  # customers who started before this change keep their Mini App button
-            menus.add_done_callback(lambda t: t.exception() and log.warning("restoring menu buttons failed: %s", t.exception()))
+        try:  # the menu button is Telegram's commands menu (Start, Til, So'm / Rubl); a new person sees the START button first
+            await notify.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        except Exception as e:
+            log.warning("could not set menu button: %s", e)
+        menus = asyncio.create_task(_reset_chat_menus())
+        menus.add_done_callback(lambda t: t.exception() and log.warning("resetting menu buttons failed: %s", t.exception()))
         try:
             click.bot_username = notify.bot_username = (await notify.bot.get_me()).username  # for Click's return link and the pay links
         except Exception as e:
             log.warning("could not read the bot username: %s", e)
         try:  # the "/" menu everyone sees, in the user's own Telegram language
-            for code, start_d, settings_d in (("ru", "Начать", "Язык и валюта"), ("uz", "Boshlash", "Til va valyuta")):
+            for code, start_d, lang_d, cur_d in (("ru", "Начать", "Язык", "Сум / Рубль"), ("uz", "Boshlash", "Til", "So'm / Rubl")):
                 await notify.bot.set_my_commands(
-                    [BotCommand(command="start", description=start_d), BotCommand(command="settings", description=settings_d)],
+                    [BotCommand(command="start", description=start_d), BotCommand(command="lang", description=lang_d), BotCommand(command="currency", description=cur_d)],
                     language_code=code,
                 )
             await notify.bot.set_my_commands(
-                [BotCommand(command="start", description="Boshlash / Начать"), BotCommand(command="settings", description="Til va valyuta / Язык и валюта")]
+                [BotCommand(command="start", description="Boshlash / Начать"), BotCommand(command="lang", description="Til / Язык"),
+                 BotCommand(command="currency", description="So'm / Rubl · Сум / Рубль")]
             )
         except Exception as e:
             log.warning("could not set the command menu: %s", e)
@@ -167,7 +172,8 @@ async def lifespan(app: FastAPI):
                 await notify.bot.set_my_commands(
                     [
                         BotCommand(command="start", description="Boshlash"),
-                        BotCommand(command="settings", description="Til va valyuta"),
+                        BotCommand(command="lang", description="Til"),
+                        BotCommand(command="currency", description="So'm / Rubl"),
                         BotCommand(command="admin", description="Admin panel"),
                         BotCommand(command="users", description="Foydalanuvchilar ro'yxati"),
                         BotCommand(command="count", description="Nechta odam bor"),
