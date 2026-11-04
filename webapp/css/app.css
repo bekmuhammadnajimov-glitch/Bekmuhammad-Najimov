@@ -539,13 +539,13 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 .gbanner-art { width: 70px; height: 70px; right: 8px; top: 8px; }
 .gbanner-art .ucimg { width: 70px; height: 70px; }
 /* round premium emblem */
-.brand-mark { border-radius: 50%; filter: drop-shadow(0 6px 10px rgba(20, 83, 45, .3)); }
-.splash-mark img { filter: drop-shadow(0 14px 24px rgba(20, 83, 45, .3)); }
-.splash-mark::before, .splash-mark::after { border-radius: 50%; inset: -14px; }
+.brand-mark { border-radius: 12px; box-shadow: 0 6px 12px -4px rgba(20, 83, 45, .45); }
+.splash-mark img { border-radius: 26px; box-shadow: 0 16px 30px -10px rgba(20, 83, 45, .45); filter: none; }
+.splash-mark::before, .splash-mark::after { border-radius: 36px; inset: -14px; }
 
 /* first-run setup screen */
 .setup { padding-top: 18px; text-align: center; }
-.setup-logo { margin: 0 auto 16px; border-radius: 50%; filter: drop-shadow(0 12px 20px rgba(20, 83, 45, .3)); }
+.setup-logo { margin: 0 auto 16px; border-radius: 22px; box-shadow: 0 14px 26px -10px rgba(20, 83, 45, .45); }
 .setup h1 { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
 .setup-sub { font-size: 13.5px; color: var(--muted); margin: 8px auto 4px; max-width: 290px; line-height: 1.55; font-weight: 500; }
 .setup .sec { justify-content: flex-start; text-align: left; margin-top: 24px; }
