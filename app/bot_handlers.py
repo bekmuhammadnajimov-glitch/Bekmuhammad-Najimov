@@ -8,11 +8,13 @@ from aiogram.types import (
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     Message,
+    ReplyKeyboardMarkup,
     WebAppInfo,
 )
 
-from . import api, db, fulfillment, notify, payments
+from . import api, botmenu, db, fulfillment, notify, payments
 from .games import REGISTRY
 from .config import (
     ADMIN_IDS,
@@ -52,6 +54,9 @@ TEXT = {
         "ask_currency": "💳 <b>To'lov valyutasini tanlang</b>\n\nSo'm — O'zbekiston kartalari uchun,\nrubl — Rossiya kartalari uchun.",
         "prefs": "⚙️ Til: <b>{lang}</b> · Valyuta: <b>{cur}</b>\nO'zgartirish: /lang · /currency",
         "lang_set": "✅ Til o'zgartirildi: <b>{lang}</b>",
+        "contact": "Savol yoki muammo bo'lsa, adminga yozing 👇",
+        "kb_hint": "Ilovani istalgan payt pastdagi tugma bilan ochasiz 👇",
+        "open_hint": "Ilovani ochish uchun bosing 👇",
         "cur_set": "✅ To'lov valyutasi: <b>{cur}</b>",
         "lang_name": "O'zbekcha",
         "cur_name": {"UZS": "so'm", "RUB": "rubl"},
@@ -74,6 +79,9 @@ TEXT = {
         "ask_currency": "💳 <b>Выберите валюту оплаты</b>\n\nСум — для карт Узбекистана,\nрубль — для карт России.",
         "prefs": "⚙️ Язык: <b>{lang}</b> · Валюта: <b>{cur}</b>\nИзменить: /lang · /currency",
         "lang_set": "✅ Язык изменён: <b>{lang}</b>",
+        "contact": "Если есть вопрос или проблема, напишите админу 👇",
+        "kb_hint": "Приложение всегда можно открыть кнопкой ниже 👇",
+        "open_hint": "Нажмите, чтобы открыть приложение 👇",
         "cur_set": "✅ Валюта оплаты: <b>{cur}</b>",
         "lang_name": "Русский",
         "cur_name": {"UZS": "сум", "RUB": "рубль"},
@@ -106,6 +114,22 @@ def _main_kb(lang: str) -> InlineKeyboardMarkup | None:
     if SUPPORT_USERNAME:  # opens the owner's Telegram profile so customers can write to them
         buttons.append(InlineKeyboardButton(text=t["admin"], url=f"https://t.me/{SUPPORT_USERNAME}"))
     return InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
+
+
+def _app_kb(lang: str) -> ReplyKeyboardMarkup:
+    """The button that stays under the message field. Its text is the same as the inline "Open" button; pressing it gets the
+    "Open / Admin" message (the catch-all handler below), because a Mini App opened straight from a keyboard button receives no
+    user data from Telegram and could not tell who is using it."""
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=TEXT[lang]["open"])]], resize_keyboard=True, is_persistent=True)
+
+
+async def _sync_menu(row: dict, message: Message | None = None, force_kb: bool = False) -> None:
+    """Commands list and app button in this person's language. Safe to call on every start: Telegram is only asked when something changed."""
+    lang = row["lang"] or "uz"
+    await botmenu.ensure_commands(row["tg_id"], row["lang"], row["tg_id"] in ADMIN_IDS)
+    if message is not None and (force_kb or row.get("kb_lang") != lang):
+        await message.answer(TEXT[lang]["kb_hint"], reply_markup=_app_kb(lang))
+        await db.execute("UPDATE users SET kb_lang = ? WHERE tg_id = ?", (lang, row["tg_id"]))
 
 
 def _lang_kb(prefix: str = "ob") -> InlineKeyboardMarkup:
@@ -145,6 +169,7 @@ async def _send_welcome(target: Message, user_row: dict) -> None:
         await target.answer_photo(FSInputFile(banner), caption=caption, reply_markup=_main_kb(lang))
     else:
         await target.answer(caption, reply_markup=_main_kb(lang))
+    await _sync_menu(user_row, target)
 
 
 async def _onboard_or(message: Message, then) -> None:
@@ -200,6 +225,8 @@ async def setting_cb(cb: CallbackQuery) -> None:
         await db.execute("UPDATE users SET lang = ? WHERE tg_id = ?", (value, cb.from_user.id))
         t = TEXT[value]
         await cb.message.edit_text(t["lang_set"].format(lang=t["lang_name"]))
+        row = await _user_row(cb.from_user.id)
+        await _sync_menu(row, cb.message, force_kb=True)  # the menu entries and the app button now speak the new language
         return await cb.answer("✅")
     if kind == "cur" and value in ("UZS", "RUB"):
         await db.execute("UPDATE users SET currency = ? WHERE tg_id = ?", (value, cb.from_user.id))
@@ -216,6 +243,7 @@ async def onboarding_cb(cb: CallbackQuery) -> None:
     _, kind, value = cb.data.split(":", 2)
     if kind == "lang" and value in ("uz", "ru"):
         await db.execute("UPDATE users SET lang = ? WHERE tg_id = ?", (value, cb.from_user.id))
+        await botmenu.ensure_commands(cb.from_user.id, value, cb.from_user.id in ADMIN_IDS)
         await cb.message.edit_text(TEXT[value]["ask_currency"], reply_markup=_currency_kb(value))
         return await cb.answer()
     if kind == "cur" and value in ("UZS", "RUB"):
@@ -406,6 +434,32 @@ async def admin(message: Message) -> None:
     if message.from_user.id not in ADMIN_IDS:
         return
     await message.answer(await _panel_text(), reply_markup=_admin_kb())
+
+
+@dp.message(F.chat.type == "private", F.text.in_({TEXT["uz"]["open"], TEXT["ru"]["open"]}))
+async def app_button(message: Message) -> None:
+    """The button under the message field was pressed: its text is removed again and the app's own Open button is shown."""
+    async def reply(msg: Message, row: dict) -> None:
+        lang = row["lang"] or "uz"
+        try:
+            await msg.delete()
+        except Exception:  # too old, no right to: the text just stays
+            pass
+        await msg.answer(TEXT[lang]["open_hint"], reply_markup=_main_kb(lang))
+
+    await _onboard_or(message, reply)
+
+
+@dp.message(Command("admin"))
+async def contact_admin(message: Message) -> None:
+    """The menu's "Admin" for customers: a button that opens the owner's chat."""
+    async def reply(msg: Message, row: dict) -> None:
+        lang = row["lang"] or "uz"
+        admin = await notify.support_username()
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=TEXT[lang]["admin"], url=f"https://t.me/{admin}")]]) if admin else _main_kb(lang)
+        await msg.answer(TEXT[lang]["contact"], reply_markup=kb)
+
+    await _onboard_or(message, reply)
 
 
 @dp.callback_query(F.data.startswith("adm:"))

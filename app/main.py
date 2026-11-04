@@ -4,11 +4,11 @@ import re
 import time
 from contextlib import asynccontextmanager
 
-from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonCommands, MenuButtonDefault
+from aiogram.types import BotCommand, MenuButtonCommands, MenuButtonDefault
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import api, click, db, fulfillment, notify
+from . import api, botmenu, click, db, fulfillment, notify
 from .bot_handlers import dp
 from .games import REGISTRY
 from .pricing import game_packs, pubg_packs, uc_options
@@ -110,6 +110,23 @@ async def _supplier_monitor(interval: float = 60, rounds: int | None = None) -> 
                 )
 
 
+async def _refresh_user_menus() -> None:
+    """Everybody who chose a language gets the menu in it (and the owner gets the owner's list). Runs again when the lists change."""
+    marker = DATA_DIR / f"menu_lang_{botmenu.version()}"
+    if marker.exists():
+        return
+    rows = await db.fetchall("SELECT tg_id, lang FROM users WHERE lang IS NOT NULL AND setup_done = 1")
+    seen = {r["tg_id"] for r in rows}
+    for admin_id in ADMIN_IDS:  # the owner may not have finished the first questions
+        if admin_id not in seen:
+            r = await db.fetchone("SELECT lang FROM users WHERE tg_id = ?", (admin_id,))
+            rows.append({"tg_id": admin_id, "lang": (r or {}).get("lang") or "uz"})
+    for r in rows:
+        await botmenu.ensure_commands(r["tg_id"], r["lang"], r["tg_id"] in ADMIN_IDS)
+        await asyncio.sleep(0.1)
+    marker.write_text("done")
+
+
 async def _reset_chat_menus() -> None:
     """Earlier versions gave each chat its own Mini App button. Put every known chat back on the bot's menu (commands), once."""
     marker = DATA_DIR / "menu_reset_v1"
@@ -151,39 +168,18 @@ async def lifespan(app: FastAPI):
             log.warning("could not set menu button: %s", e)
         menus = asyncio.create_task(_reset_chat_menus())
         menus.add_done_callback(lambda t: t.exception() and log.warning("resetting menu buttons failed: %s", t.exception()))
+        menus2 = asyncio.create_task(_refresh_user_menus())
+        menus2.add_done_callback(lambda t: t.exception() and log.warning("refreshing the menus failed: %s", t.exception()))
         try:
             click.bot_username = notify.bot_username = (await notify.bot.get_me()).username  # for Click's return link and the pay links
         except Exception as e:
             log.warning("could not read the bot username: %s", e)
-        try:  # the "/" menu everyone sees, in the user's own Telegram language
-            for code, start_d, lang_d, cur_d in (("ru", "Начать", "Язык", "Сум / Рубль"), ("uz", "Boshlash", "Til", "So'm / Rubl")):
-                await notify.bot.set_my_commands(
-                    [BotCommand(command="start", description=start_d), BotCommand(command="lang", description=lang_d), BotCommand(command="currency", description=cur_d)],
-                    language_code=code,
-                )
-            await notify.bot.set_my_commands(
-                [BotCommand(command="start", description="Boshlash / Начать"), BotCommand(command="lang", description="Til / Язык"),
-                 BotCommand(command="currency", description="So'm / Rubl · Сум / Рубль")]
-            )
+        try:  # the "/" menu of people who have not chosen a language in the bot yet: Telegram's own language decides
+            for code in ("ru", "uz"):
+                await notify.bot.set_my_commands(botmenu.commands(code, owner=False), language_code=code)
+            await notify.bot.set_my_commands([BotCommand(command=c, description=d) for c, d in botmenu.DEFAULT_BOTH])
         except Exception as e:
             log.warning("could not set the command menu: %s", e)
-        for admin_id in ADMIN_IDS:  # the "/" command menu shows these only in the admin's own chat
-            try:
-                await notify.bot.set_my_commands(
-                    [
-                        BotCommand(command="start", description="Boshlash"),
-                        BotCommand(command="lang", description="Til"),
-                        BotCommand(command="currency", description="So'm / Rubl"),
-                        BotCommand(command="admin", description="Admin panel"),
-                        BotCommand(command="users", description="Foydalanuvchilar ro'yxati"),
-                        BotCommand(command="count", description="Nechta odam bor"),
-                        BotCommand(command="supplier", description="Yetkazib beruvchi holati"),
-                        BotCommand(command="id", description="Mening Telegram ID'im"),
-                    ],
-                    scope=BotCommandScopeChat(chat_id=admin_id),
-                )
-            except Exception as e:
-                log.warning("could not set admin commands for %s: %s", admin_id, e)
         polling = asyncio.create_task(dp.start_polling(notify.bot, handle_signals=False))
     else:
         log.warning("BOT_TOKEN is empty: the bot is off and only DEV_MODE requests can authenticate")

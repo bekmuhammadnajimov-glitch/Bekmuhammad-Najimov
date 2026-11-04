@@ -82,6 +82,8 @@ async def init() -> None:
         await _db.execute("ALTER TABLE users ADD COLUMN currency TEXT")
     if "setup_done" not in ucols:
         await _db.execute("ALTER TABLE users ADD COLUMN setup_done INTEGER NOT NULL DEFAULT 0")
+    if "kb_lang" not in ucols:  # the language of the app button under the message field this person was last sent (see botmenu / bot_handlers)
+        await _db.execute("ALTER TABLE users ADD COLUMN kb_lang TEXT")
     # amounts can now be in so'm or rubles: `amount` + `currency` replace `amount_uzs`
     if "amount_uzs" in cols:
         await _db.execute("ALTER TABLE orders RENAME COLUMN amount_uzs TO amount")
