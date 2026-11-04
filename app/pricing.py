@@ -3,7 +3,7 @@ import re
 import time
 from decimal import Decimal
 
-from .config import MARKUP_PERCENT, PUBG_ORDER_CATEGORY, ROUND_TO, RUB_ROUND_TO, USD_RUB_RATE, USD_UZS_RATE
+from .config import MARKUP_PERCENT, PUBG_ORDER_CATEGORY, ROUND_TO, USD_UZS_RATE
 from .fazercards import FazerCards
 
 _CACHE_TTL = 600
@@ -21,15 +21,6 @@ PRESET_UC = [60, 120, 180, 335, 385, 660, 720, 985, 1045, 1320, 1950, 2155, 2460
 def uzs_price(cost_usd: Decimal | str) -> int:
     raw = float(Decimal(str(cost_usd))) * USD_UZS_RATE * (1 + MARKUP_PERCENT / 100)
     return int(math.ceil(raw / ROUND_TO) * ROUND_TO)
-
-
-def rub_price(cost_usd: Decimal | str) -> int:
-    raw = float(Decimal(str(cost_usd))) * USD_RUB_RATE * (1 + MARKUP_PERCENT / 100)
-    return int(math.ceil(raw / RUB_ROUND_TO) * RUB_ROUND_TO)
-
-
-def price_in(cost_usd: Decimal | str, currency: str) -> int:
-    return rub_price(cost_usd) if currency == "RUB" else uzs_price(cost_usd)
 
 
 def _section(offer_id: str) -> str:
@@ -81,7 +72,6 @@ async def pubg_packs(supplier: FazerCards) -> list[dict]:
                 "uc": uc,
                 "cost_usd": o["price_usd"],
                 "price": price,
-                "price_rub": rub_price(o["price_usd"]),
                 "per_uc": round(price / uc, 1) if uc else None,
             }
         )
@@ -116,7 +106,6 @@ async def game_packs(supplier, game, region: str = "") -> list[dict]:
             "region": region,
             "cost_usd": r["cost_usd"],
             "price": uzs_price(r["cost_usd"]),
-            "price_rub": rub_price(r["cost_usd"]),
             **({"items": r["items"]} if r.get("items") else {}),  # an amount put together from several supplier packs
         }
         for r in raw
@@ -192,7 +181,7 @@ def quote_uc(catalog: list[dict], amount: int) -> dict:
     total = best[amount][0]
     return {
         "ok": True, "items": items, "uc": amount, "cost_usd": str(total),
-        "price": uzs_price(total), "price_rub": rub_price(total), "units": units,
+        "price": uzs_price(total), "units": units,
     }
 
 
@@ -209,7 +198,6 @@ def uc_options(catalog: list[dict]) -> list[dict]:
             {
                 "uc": a,
                 "price": q["price"],
-                "price_rub": q["price_rub"],
                 "per_uc": round(q["price"] / a, 1),
                 "units": q["units"],
                 "offer_id": q["items"][0]["offer_id"] if single else None,

@@ -518,13 +518,7 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 .ucart.n3 .u1 { width: 64px; height: 64px; margin-left: -24px; }
 .ucart.n3 .u2 { width: 54px; height: 54px; margin-left: -24px; }
 .pack .art { overflow: hidden; }
-/* currency switch */
 .top-actions { display: flex; align-items: center; gap: 10px; }
-.cur-seg { padding: 2px; border-radius: 12px; }
-.cur-seg button { padding: 8px 12px; min-width: 42px; font-size: 12.5px; }
-.cur-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 14px; padding: 10px 12px 10px 14px; border-radius: 16px; background: var(--card); border: 1px solid var(--line-strong); font-size: 13px; font-weight: 700; }
-.cur-row span { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
-.cur-row .ic { color: var(--accent); }
 /* Click payment box */
 .clickbox { display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 18px; background: var(--hero-grad); box-shadow: 0 14px 28px -14px rgba(20, 83, 45, .7); }
 .clicklogo { flex: none; padding: 8px 14px; border-radius: 12px; background: #fff; color: var(--accent-2); font-size: 18px; font-weight: 800; letter-spacing: -.02em; text-transform: lowercase; }

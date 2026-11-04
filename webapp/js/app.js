@@ -16,13 +16,9 @@ const t = (key, vars = {}) => {
   for (const [k, v] of Object.entries(vars)) s = s.split('{' + k + '}').join(v);
   return s;
 };
-/* ---- currency: customers pay in so'm or rubles (their choice is remembered) ---- */
-const CUR_KEY = 'nx_cur';
-const loadCur = () => { try { return localStorage.getItem(CUR_KEY) === 'RUB' ? 'RUB' : 'UZS'; } catch (_) { return 'UZS'; } };
-let CUR = loadCur();
-const money = (n, cur = CUR) => (cur === 'RUB' ? `${fmt(n)} ₽` : `${fmt(n)} ${t('som')}`);
-const priceOf = (p, cur = CUR) => (cur === 'RUB' ? p.price_rub : p.price);
-const curSeg = () => `<div class="seg cur-seg">${['UZS', 'RUB'].map((c) => `<button class="${CUR === c ? 'on' : ''}" data-act="set-cur" data-cur="${c}">${c === 'RUB' ? '₽' : esc(t('som'))}</button>`).join('')}</div>`;
+/* ---- prices are in so'm only ---- */
+const money = (n) => `${fmt(n)} ${t('som')}`;
+const priceOf = (p) => p.price;
 
 /* ---------------------------------------------------------------- icons */
 const ICONS = {
@@ -296,14 +292,14 @@ const cta = (total, label, disabled, act, hidden = false) => `<div class="cta-ba
 
 const orderRow = (o) => `<button class="orow" data-act="open-order" data-id="${o.id}">
   ${gameIcon(o.game || 'pubg', gameOf(o.game || 'pubg').name)}<div class="mid"><div class="t">${esc(orderTitle(o))}</div><div class="s">${o.code} · ${when(o.created_at)}</div></div>
-  <div class="end"><div class="a">${money(o.amount, o.currency)}</div>${tag(o.status)}</div></button>`;
+  <div class="end"><div class="a">${money(o.amount)}</div>${tag(o.status)}</div></button>`;
 
 /* ---------------------------------------------------------------- screens */
 const screens = {};
 const after = {};
 
 const liveCard = (g) => {
-  const from = priceOf({ price: g.from_price, price_rub: g.from_price_rub });
+  const from = priceOf({ price: g.from_price });
   return `<button class="game-live" data-act="open-game" data-game="${esc(g.id)}">${gameIcon(g.id, g.name)}<div class="gl-tx"><div class="gl-name">${esc(g.name)}</div><div class="gl-from">${from ? t('from_price', { price: `<b>${money(from)}</b>` }) : t('top_up')}</div></div></button>`;
 };
 
@@ -336,7 +332,7 @@ screens.home = () => {
   return `
   <header class="topbar">
     <div class="brand">${LOGO}<div><div class="brand-name">NEXDONATE</div><div class="brand-sub">${t('brand_sub')}</div></div></div>
-    <div class="top-actions">${curSeg()}<button class="icon-btn" data-act="tab" data-tab="support" aria-label="${t('tab_support')}">${ic('support')}</button></div>
+    <div class="top-actions"><button class="icon-btn" data-act="tab" data-tab="support" aria-label="${t('tab_support')}">${ic('support')}</button></div>
   </header>
 
   <section class="hero">
@@ -359,7 +355,7 @@ screens.home = () => {
       <div class="game-info">
         <div class="game-name">PUBG Mobile</div>
         <div class="game-meta">Unknown Cash (UC)</div>
-        <div class="game-from">${pubg && priceOf({ price: pubg.from_price, price_rub: pubg.from_price_rub }) ? t('from_price', { price: `<b>${money(priceOf({ price: pubg.from_price, price_rub: pubg.from_price_rub }))}</b>` }) : t('top_up')}</div>
+        <div class="game-from">${pubg && priceOf({ price: pubg.from_price }) ? t('from_price', { price: `<b>${money(priceOf({ price: pubg.from_price }))}</b>` }) : t('top_up')}</div>
       </div>
     </div>
     <span class="go">${ic('arrow')}</span>
@@ -376,7 +372,7 @@ const BONUS = { 325: '300 + 25', 660: '600 + 60', 1800: '1500 + 300', 3850: '300
 const tierOf = (uc) => (uc < 200 ? 0 : uc < 1000 ? 1 : uc < 3000 ? 2 : uc < 6000 ? 3 : 4);
 
 // A UC option from /packs becomes the "pack" the checkout works with.
-const ucPack = (q) => ({ section: 'uc', uc: q.uc, price: q.price, price_rub: q.price_rub, items: q.items, offer_id: q.offer_id, custom: !q.offer_id, name: `${q.uc} UC` });
+const ucPack = (q) => ({ section: 'uc', uc: q.uc, price: q.price, items: q.items, offer_id: q.offer_id, custom: !q.offer_id, name: `${q.uc} UC` });
 const isSel = (p) => {
   const c = S.co.pack; if (!c) return false;
   return p.section === 'uc' || p.uc ? c.section === 'uc' && c.uc === p.uc : c.offer_id === p.offer_id;
@@ -479,7 +475,6 @@ screens.game = () => {
       <div><h2>${esc(g.name)}</h2>
         <div class="gchips">${chips}</div></div></div>
   </section>
-  <div class="cur-row"><span>${ic('card', 'sm')}${t('currency_label')}</span>${curSeg()}</div>
   <div id="packs-wrap"><div class="packs" id="packs">${Array.from({ length: 6 }, () => '<div class="skeleton"></div>').join('')}</div></div>
   ${cta(co.pack ? money(priceOf(co.pack)) : '', t('continue'), !co.pack, 'next', !co.pack)}`;
 };
@@ -639,11 +634,11 @@ function queueValidate() {
 /* ----- step 3: payment ----- */
 async function ensureOrder() {
   const co = S.co;
-  const key = co.pack ? `${S.game}|${co.pack.region || ''}|${co.pack.custom ? 'c' + co.pack.uc : co.pack.offer_id}|${co.pid}|${CUR}` : null;
+  const key = co.pack ? `${S.game}|${co.pack.region || ''}|${co.pack.custom ? 'c' + co.pack.uc : co.pack.offer_id}|${co.pid}` : null;
   if (co.order && co.order.status === 'awaiting_payment' && (!co.orderKey || co.orderKey === key)) return co.order;
   if (co.order && co.order.status === 'awaiting_payment') await api(`/orders/${co.order.id}/cancel`, { method: 'POST' }).catch(() => {});
   const what = isPubg() ? (co.pack.custom ? { custom_uc: co.pack.uc } : { offer_id: co.pack.offer_id }) : { offer_id: co.pack.offer_id, region: co.pack.region || '' };
-  co.order = await api('/orders', { method: 'POST', body: { game: S.game, ...what, player_id: co.pid, confirm_id: co.confirm, save_id: co.save && kindOf() !== 'code', currency: CUR } });
+  co.order = await api('/orders', { method: 'POST', body: { game: S.game, ...what, player_id: co.pid, confirm_id: co.confirm, save_id: co.save && kindOf() !== 'code' } });
   co.orderKey = key;
   if (co.save) api('/bootstrap').then((b) => { S.savedIds = b.saved_ids; }).catch(() => {});
   return co.order;
@@ -656,7 +651,7 @@ const summaryCard = (o) => {
   ${breakdown(o.items, o.game || 'pubg') ? `<div class="sum-row"><span>${t('contents')}</span><b>${breakdown(o.items, o.game || 'pubg')}</b></div>` : ''}
   ${o.nick ? `<div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick)}</b></div>` : ''}
   ${kind === 'code' ? '' : `<div class="sum-row"><span>${t(kind === 'username' ? 'tg_username' : 'player_id')}</span><b>${esc(shownId(o.player_id, kind))}</b></div>`}
-  <div class="sum-row total"><span>${t('to_pay')}</span><b>${money(o.amount, o.currency)}</b></div></div>`;
+  <div class="sum-row total"><span>${t('to_pay')}</span><b>${money(o.amount)}</b></div></div>`;
 };
 
 const timerText = (o) => {
@@ -672,14 +667,14 @@ function payBody() {
     pay = `<div class="card pay-card">
       <div class="pay-title"><span>${t('pay_bot_title')}</span><span class="timer">${ic('clock', 'sm')}<span id="timer">${timerText(o)}</span></span></div>
       ${p.available ? '' : `<div class="notice" style="margin-bottom:12px">${ic('alert', 'sm')}<span>${t('pay_unavailable')}</span></div>`}
-      <div class="botbox"><div class="botlogo">${ic('send')}</div><div><b>${money(o.amount, o.currency)}</b><span>${t('pay_bot_sub')}</span></div></div>
+      <div class="botbox"><div class="botlogo">${ic('send')}</div><div><b>${money(o.amount)}</b><span>${t('pay_bot_sub')}</span></div></div>
       <ol class="steps-list" style="margin-top:18px">
-        <li>${t('pay_bot_s1')}</li><li>${t('pay_bot_s2', { amount: `<b>${money(o.amount, o.currency)}</b>` })}</li><li>${t('pay_bot_s3')}</li></ol></div>
+        <li>${t('pay_bot_s1')}</li><li>${t('pay_bot_s2', { amount: `<b>${money(o.amount)}</b>` })}</li><li>${t('pay_bot_s3')}</li></ol></div>
       <div class="notice mt">${ic('shield', 'sm')}<span>${t('pay_bot_note')}</span></div>`;  } else if (p.provider === 'click') {
     pay = `<div class="card pay-card">
       <div class="pay-title"><span>${t('click_title')}</span><span class="timer">${ic('clock', 'sm')}<span id="timer">${timerText(o)}</span></span></div>
       ${p.available ? '' : `<div class="notice" style="margin-bottom:12px">${ic('alert', 'sm')}<span>${t('pay_unavailable')}</span></div>`}
-      <div class="clickbox"><div class="clicklogo">click</div><div><b>${money(o.amount, o.currency)}</b><span>${t('click_sub')}</span></div></div>
+      <div class="clickbox"><div class="clicklogo">click</div><div><b>${money(o.amount)}</b><span>${t('click_sub')}</span></div></div>
       <ol class="steps-list" style="margin-top:18px">
         <li>${t('click_step1')}</li><li>${t('click_step2')}</li><li>${t('click_step3')}</li></ol></div>
       <div class="notice mt">${ic('shield', 'sm')}<span>${t('click_note')}</span></div>`;
@@ -692,7 +687,7 @@ function payBody() {
   const codeNote = kindOf() === 'code' ? `<div class="notice mt">${ic('lock', 'sm')}<span>${t('code_pay_note')}</span></div>` : '';
   return `${stepper(3)}${summaryCard(o)}${pay}${codeNote}
     <button class="text-btn" data-act="cancel-order">${t('cancel_order')}</button>
-    ${cta(money(o.amount, o.currency), lbl, dis, 'pay')}`;
+    ${cta(money(o.amount), lbl, dis, 'pay')}`;
 }
 
 screens.pay = () => `<div id="paybox">${S.co.order && S.co.order.status === 'awaiting_payment' ? payBody() : `${stepper(3)}<div class="skeleton" style="height:220px"></div>`}</div>`;
@@ -794,7 +789,7 @@ screens.order = () => {
     ${o.nick ? `<div class="sum-row"><span>${t('account')}</span><b>${esc(o.nick)}</b></div>` : ''}
     ${gameOf(o.game || 'pubg').kind === 'code' ? '' : `<div class="sum-row"><span>${t(gameOf(o.game || 'pubg').kind === 'username' ? 'tg_username' : 'player_id')}</span><b>${esc(shownId(o.player_id, gameOf(o.game || 'pubg').kind))}</b></div>`}
     <div class="sum-row"><span>${t('date')}</span><b>${when(o.created_at)}</b></div>
-    <div class="sum-row total"><span>${t('amount')}</span><b>${money(o.amount, o.currency)}</b></div></div>
+    <div class="sum-row total"><span>${t('amount')}</span><b>${money(o.amount)}</b></div></div>
   <div class="mt" style="display:grid;gap:10px">
     ${o.status === 'awaiting_payment' ? `<button class="btn gold block" data-act="resume-pay">${t('continue_pay')} ${ic('arrow', 'sm')}</button>` : ''}
     ${['completed', 'cancelled', 'expired'].includes(o.status) ? `<button class="btn gold block" data-act="open-game" data-game="${esc(o.game || 'pubg')}">${t('buy_again')}</button>` : ''}
@@ -839,9 +834,9 @@ screens.support = () => {
   <h2 class="sec">${t('faq')}</h2><div class="list">${faq}</div>`;
 };
 
-/* ----- first run: language + payment currency ----- */
+/* ----- first run: language ----- */
 screens.setup = () => {
-  const s = S.setup || (S.setup = { lang, cur: CUR });
+  const s = S.setup || (S.setup = { lang });
   const opt = (act, key, val, main, sub, badge) => `<button class="opt ${s[key] === val ? 'on' : ''}" data-act="${act}" data-v="${val}">
     <span class="obadge">${badge}</span><span class="otx"><b>${main}</b>${sub ? `<small>${sub}</small>` : ''}</span><span class="ock">${ic('check', 'sm')}</span></button>`;
   return `<div class="setup">
@@ -849,8 +844,6 @@ screens.setup = () => {
     <h1>${t('setup_title')}</h1><p class="setup-sub">${t('setup_sub')}</p>
     <h2 class="sec"><span>${t('setup_lang')}</span></h2>
     <div class="opts">${opt('setup-pick', 'lang', 'uz', "O'zbekcha", '', 'UZ')}${opt('setup-pick', 'lang', 'ru', 'Русский', '', 'RU')}</div>
-    <h2 class="sec"><span>${t('currency_label')}</span></h2>
-    <div class="opts">${opt('setup-pick', 'cur', 'UZS', t('setup_uzs'), t('setup_uzs_sub'), "so'm")}${opt('setup-pick', 'cur', 'RUB', t('setup_rub'), t('setup_rub_sub'), '₽')}</div>
     <button class="btn gold block mt" data-act="setup-go" id="setup-go">${t('start')} ${ic('arrow', 'sm')}</button></div>`;
 };
 /* ----- profile ----- */
@@ -862,12 +855,11 @@ screens.profile = () => {
   return `<h1 class="page-title">${t('tab_profile')}</h1>
   <div class="card-hl profile-head">${avatar}<div><div class="n">${esc(name)}</div><div class="u">${u.username ? '@' + esc(u.username) + ' · ' : ''}ID ${u.id}</div></div></div>
   <div class="stats"><div class="stat"><span>${t('stat_orders')}</span><b>${fmt(S.stats.orders)}</b></div>
-    <div class="stat"><span>${t('stat_spent')}</span><b>${money(S.stats.spent.UZS || 0, 'UZS')}</b>${S.stats.spent.RUB ? `<b>${money(S.stats.spent.RUB, 'RUB')}</b>` : ''}</div></div>
+    <div class="stat"><span>${t('stat_spent')}</span><b>${money(S.stats.spent.UZS || 0)}</b></div></div>
   <h2 class="sec">${t('saved_ids')}</h2>
   <div class="list">${saved.length ? saved.map((s) => `<div class="li">${ic('id')}<div class="grow"><div>${esc(s.nick || gameOf(s.game).name)}</div><div class="sub">${esc(gameOf(s.game).name)} · ${esc(shownId(s.player_id, gameOf(s.game).kind))}</div></div><button class="del" data-act="del-id" data-id="${s.id}" aria-label="delete">${ic('trash', 'sm')}</button></div>`).join('') : `<div class="li" style="color:var(--muted);font-size:13px">${t('no_saved')}</div>`}</div>
   <h2 class="sec">${t('settings')}</h2>
   <div class="list">
-    <div class="li">${ic('card')}<div class="grow">${t('currency_label')}</div>${curSeg()}</div>
     <div class="li">${ic('globe')}<div class="grow">${t('language')}</div>
       <div class="seg"><button class="${lang === 'uz' ? 'on' : ''}" data-act="lang" data-lang="uz">UZ</button><button class="${lang === 'ru' ? 'on' : ''}" data-act="lang" data-lang="ru">RU</button></div></div>
     <button class="li" data-act="tab" data-tab="support">${ic('help')}<div class="grow">${t('faq')}</div>${ic('chevron', 'sm')}</button>
@@ -955,28 +947,17 @@ const actions = {
     document.querySelectorAll('.lb-tabs .tabchip').forEach((b) => b.classList.toggle('on', b === el)); // the chips stay where they are scrolled to
     const list = $('#lb'); if (list) list.innerHTML = lbBody();
   },
-  'set-cur': (el) => {
-    const c = el.dataset.cur === 'RUB' ? 'RUB' : 'UZS';
-    if (c === CUR) return;
-    CUR = c; haptic('light');
-    try { localStorage.setItem(CUR_KEY, c); } catch (_) {}
-    api('/currency', { method: 'POST', body: { currency: c } }).catch(() => {});
-    if (cur().name === 'game') {
-      document.querySelectorAll('.cur-seg').forEach((s) => { s.innerHTML = curSeg().replace(/^<div[^>]*>|<\/div>$/g, ''); });
-      renderPacks(); syncCta();
-    } else render();
-  },
   'setup-pick': (el) => {
     const s = S.setup, v = el.dataset.v;
-    if (v === 'uz' || v === 'ru') { s.lang = v; lang = v; document.documentElement.lang = v; } else { s.cur = v; }
+    if (v === 'uz' || v === 'ru') { s.lang = v; lang = v; document.documentElement.lang = v; }
     haptic('light'); render();
   },
   'setup-go': async (el) => {
     const s = S.setup; el.disabled = true;
     try {
-      await api('/setup', { method: 'POST', body: { lang: s.lang, currency: s.cur } });
-      lang = s.lang; CUR = s.cur; try { localStorage.setItem(CUR_KEY, CUR); } catch (_) {}
-      S.user.lang = lang; S.user.currency = CUR; S.user.setup_done = true;
+      await api('/setup', { method: 'POST', body: { lang: s.lang } });
+      lang = s.lang;
+      S.user.lang = lang; S.user.setup_done = true;
       notice('success'); setStack([{ name: 'home' }]);
     } catch (e) { toast(errText(e)); el.disabled = false; }
   },
@@ -1065,9 +1046,8 @@ async function boot() {
     S.user = b.user; S.stats = b.stats; S.games = b.games; S.savedIds = b.saved_ids; S.lb = b.leaderboard;
     S.support = b.support_username; S.provider = b.payment_provider; S.botUrl = b.bot_url || '';
     lang = b.user.lang || 'uz';
-    if (b.user.currency === 'UZS' || b.user.currency === 'RUB') { CUR = b.user.currency; try { localStorage.setItem(CUR_KEY, CUR); } catch (_) {} }
     document.documentElement.lang = lang;
-    if (!b.user.setup_done) { S.setup = { lang, cur: CUR }; S.stack = [{ name: 'setup' }]; }  // opened without the bot's questions
+    if (!b.user.setup_done) { S.setup = { lang }; S.stack = [{ name: 'setup' }]; }  // opened without the bot's questions
     $('#app').hidden = false;
     render();
   } catch (e) {

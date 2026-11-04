@@ -14,7 +14,7 @@ SKEW = 120  # seconds of clock difference we tolerate between the bank/Click and
 
 
 def _fmt(amount: int, currency: str) -> str:
-    return f"{amount:,} {'₽' if currency == 'RUB' else 'so' + chr(39) + 'm'}".replace(",", " ")
+    return f"{amount:,} so'm".replace(",", " ")
 
 
 async def confirm_order(order_id: str, by: str, note: str = "") -> bool:

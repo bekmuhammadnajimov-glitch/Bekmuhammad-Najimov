@@ -15,7 +15,6 @@ from .pricing import game_packs, pubg_packs, uc_options
 from .config import (
     ADMIN_IDS,
     CARD_NUMBER,
-    CARD_RUB_NUMBER,
     CLICK_READY,
     DATA_DIR,
     DEV_MODE,
@@ -164,9 +163,12 @@ async def lifespan(app: FastAPI):
         log.warning("REAL payments are on but FULFILLMENT_MODE=%s: customers can pay and the UC will NOT really be delivered", FULFILLMENT_MODE)
     if PAYMENT_PROVIDER == "click" and not CLICK_READY:
         log.warning("PAYMENT_PROVIDER=click but CLICK_SERVICE_ID / CLICK_MERCHANT_ID / CLICK_SECRET_KEY are not all set: so'm payments will be unavailable")
-    if PAYMENT_PROVIDER == "manual_card" and not ((CARD_NUMBER or CARD_RUB_NUMBER) and ADMIN_IDS):
-        log.warning("PAYMENT_PROVIDER=manual_card needs a card (CARD_NUMBER / CARD_RUB_NUMBER) and ADMIN_IDS, otherwise receipts cannot be approved")
+    if PAYMENT_PROVIDER == "manual_card" and not (CARD_NUMBER and ADMIN_IDS):
+        log.warning("PAYMENT_PROVIDER=manual_card needs a card (CARD_NUMBER) and ADMIN_IDS, otherwise receipts cannot be approved")
     await db.init()
+    left = await db.fetchone("SELECT COUNT(*) AS n FROM orders WHERE currency = 'RUB'")
+    if left and left["n"]:
+        log.info("orders still recorded in rubles (history, no new ones are taken): %s", left["n"])
     polling = None
     if notify.bot:
         try:  # the default menu button is Telegram's own: a new person sees the START button; the Mini App button is set per chat after START

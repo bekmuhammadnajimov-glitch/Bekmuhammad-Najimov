@@ -14,17 +14,16 @@ from . import click, db, fulfillment, notify, payments
 from .auth import current_user
 from .config import (
     CARD_NUMBER,
-    CARD_RUB_NUMBER,
     CLICK_READY,
     CURRENCIES,
     FULFILLMENT_MODE,
     INCOMING_SECRET,
     PAYMENT_TTL_MIN,
     PUBG_VALIDATE_CATEGORY,
-    provider_for,
+    PAYMENT_PROVIDER,
 )
 from .games import REGISTRY
-from .pricing import game_packs, peek_game_packs, price_in, pubg_packs, quote_uc, rub_price, uc_options, uzs_price
+from .pricing import game_packs, peek_game_packs, pubg_packs, quote_uc, uc_options, uzs_price
 from .supplier import SupplierError
 
 router = APIRouter(prefix="/api")
@@ -54,10 +53,10 @@ def _game(game_id: str):
     return g
 
 
-def _games_view(from_price, from_price_rub) -> list[dict]:
+def _games_view(from_price) -> list[dict]:
     out = [
         {**g, "kind": "id", "from_price": from_price if g["id"] == "pubg" else None,
-         "from_price_rub": from_price_rub if g["id"] == "pubg" else None}
+         }
         for g in GAMES
     ]
     for g in REGISTRY.values():
@@ -68,7 +67,6 @@ def _games_view(from_price, from_price_rub) -> list[dict]:
             "redeem_url": g.redeem_url, "active": active,
             "regions": list(g.regions), "default_region": g.default_region,
             "from_price": min((p["price"] for p in cached), default=None) if cached else None,
-            "from_price_rub": min((p["price_rub"] for p in cached), default=None) if cached else None,
         })
     return out
 _hits: dict[int, deque] = defaultdict(deque)
@@ -115,11 +113,11 @@ async def _wallet_covers(cost_usd) -> bool:
 
 
 def _money(amount: int, currency: str) -> str:
-    return f"{amount:,} {'₽' if currency == 'RUB' else 'so' + chr(39) + 'm'}".replace(",", " ")
+    return f"{amount:,} so'm".replace(",", " ")
 
 
 def _payment_view(order: dict) -> dict:
-    provider = provider_for(order["currency"])
+    provider = PAYMENT_PROVIDER
     if provider == "click":
         return {
             "provider": "click",
@@ -130,11 +128,11 @@ def _payment_view(order: dict) -> dict:
         }
     if provider == "manual_card":
         # Card transfer: the card number, exact amount and the receipt step all live in the bot chat.
-        number = CARD_RUB_NUMBER if order["currency"] == "RUB" else CARD_NUMBER
+        number = CARD_NUMBER
         username = notify.bot_username
         return {
             "provider": "bot",
-            "available": bool(number and username),  # false until a card is set for this currency
+            "available": bool(number and username),  # false until the card is set
             "bot_url": f"https://t.me/{username}?start=pay_{order['id']}" if username else "",
             "amount": order["amount"],
             "currency": order["currency"],
@@ -199,15 +197,11 @@ async def _own_order(order_id: str, user: dict) -> dict:
 
 
 async def _stats(tg_id: int) -> dict:
-    rows = await db.fetchall(
-        "SELECT currency, COUNT(*) AS n, COALESCE(SUM(amount), 0) AS spent FROM orders "
-        "WHERE tg_id = ? AND status = 'completed' GROUP BY currency",
+    row = await db.fetchone(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS spent FROM orders WHERE tg_id = ? AND status = 'completed' AND currency = 'UZS'",
         (tg_id,),
     )
-    spent = {c: 0 for c in CURRENCIES}
-    for r in rows:
-        spent[r["currency"]] = r["spent"]
-    return {"orders": sum(r["n"] for r in rows), "spent": spent}
+    return {"orders": row["n"], "spent": {"UZS": row["spent"]}}
 
 
 # ---------------------------------------------------------------- top donors
@@ -223,7 +217,7 @@ def _lb_name(row: dict) -> str:
 
 async def _leaderboard(tg_id: int) -> dict:
     """The ten customers with the most completed purchases in each period (ranked by what the orders cost us, so
-    so'm and ruble customers compare), shown in both currencies at our prices. One minute cache, shared by everybody."""
+    customers compare), shown at our prices. One minute cache, shared by everybody."""
     if time.time() - _lb["at"] > 60:
         now = db.now()
         _lb["rows"] = {
@@ -242,7 +236,7 @@ async def _leaderboard(tg_id: int) -> dict:
         key: [
             {
                 "name": _lb_name(r), "photo_url": r["photo_url"], "orders": r["n"],
-                "price": uzs_price(str(r["usd"])), "price_rub": rub_price(str(r["usd"])), "me": r["tg_id"] == tg_id,
+                "price": uzs_price(str(r["usd"])), "me": r["tg_id"] == tg_id,
             }
             for r in rows
         ]
@@ -254,13 +248,12 @@ async def _leaderboard(tg_id: int) -> dict:
 @router.get("/bootstrap")
 async def bootstrap(user: dict = Depends(current_user)):
     await _expire_stale()
-    from_price = from_price_rub = None
+    from_price = None
     try:
         # never let a slow supplier hold up the home screen
         packs = await asyncio.wait_for(pubg_packs(fulfillment.supplier), timeout=2.5)
         uc = [p for p in packs if p["section"] == "uc"]
         from_price = min((p["price"] for p in uc), default=None)
-        from_price_rub = min((p["price_rub"] for p in uc), default=None)
     except Exception:
         pass
     ids = await db.fetchall(
@@ -274,16 +267,15 @@ async def bootstrap(user: dict = Depends(current_user)):
             "username": user["username"],
             "photo_url": user["photo_url"],
             "lang": user["lang"],
-            "currency": user["currency"],
             "setup_done": bool(user["setup_done"]),
         },
         "stats": await _stats(user["tg_id"]),
-        "games": _games_view(from_price, from_price_rub),
+        "games": _games_view(from_price),
         "saved_ids": ids,
         "leaderboard": await _leaderboard(user["tg_id"]),
         "support_username": await notify.support_username(),
         "bot_url": f"https://t.me/{notify.bot_username}" if notify.bot_username else "",
-        "payment_provider": {c: provider_for(c) for c in CURRENCIES},
+        "payment_provider": {"UZS": PAYMENT_PROVIDER},
     }
 
 
@@ -299,33 +291,16 @@ async def set_lang(body: LangIn, user: dict = Depends(current_user)):
     return {"ok": True}
 
 
-class CurrencyIn(BaseModel):
-    currency: str
-
-
-@router.post("/currency")
-async def set_currency(body: CurrencyIn, user: dict = Depends(current_user)):
-    if body.currency not in CURRENCIES:
-        raise HTTPException(400, "bad_currency")
-    await db.execute("UPDATE users SET currency = ? WHERE tg_id = ?", (body.currency, user["tg_id"]))
-    return {"ok": True}
-
-
 class SetupIn(BaseModel):
     lang: str
-    currency: str
 
 
 @router.post("/setup")
 async def finish_setup(body: SetupIn, user: dict = Depends(current_user)):
-    """First-run screen of the Mini App: saves the language and the currency in one go."""
+    """First-run screen of the Mini App: saves the language (so'm is the only currency)."""
     if body.lang not in ("uz", "ru"):
         raise HTTPException(400, "bad_lang")
-    if body.currency not in CURRENCIES:
-        raise HTTPException(400, "bad_currency")
-    await db.execute(
-        "UPDATE users SET lang = ?, currency = ?, setup_done = 1 WHERE tg_id = ?", (body.lang, body.currency, user["tg_id"])
-    )
+    await db.execute("UPDATE users SET lang = ?, currency = 'UZS', setup_done = 1 WHERE tg_id = ?", (body.lang, user["tg_id"]))
     return {"ok": True}
 
 
@@ -344,7 +319,7 @@ async def packs(game: str, region: str = "", user: dict = Depends(current_user))
             raise HTTPException(503, "catalog_unavailable")
         return {
             "region": region,
-            "packs": [{k: p[k] for k in ("offer_id", "amount", "unit", "name", "section", "label", "price", "price_rub")} for p in items],
+            "packs": [{k: p[k] for k in ("offer_id", "amount", "unit", "name", "section", "label", "price")} for p in items],
         }
     try:
         items = await pubg_packs(fulfillment.supplier)
@@ -425,14 +400,11 @@ class OrderIn(BaseModel):
     confirm_id: str | None = None  # the ID typed a second time; required when the supplier cannot look IDs up
     region: str = ""  # the account's game server, for games that have one (Free Fire)
     save_id: bool = False
-    currency: str = "UZS"
 
 
 @router.post("/orders")
 async def create_order(body: OrderIn, user: dict = Depends(current_user)):
     g = None if body.game == "pubg" else _game(body.game)  # None = PUBG UC, which has its own pack logic
-    if body.currency not in CURRENCIES:
-        raise HTTPException(422, "bad_currency")
     _rate_limit(user["tg_id"], limit=10)
     await _expire_stale()
 
@@ -457,7 +429,7 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
             raise HTTPException(404, "pack_not_found")
         section = pack["section"]
         order_items = pack.get("items") or [{"offer_id": pack["offer_id"], "name": pack["name"], "uc": pack["amount"], "qty": 1}]
-        title, uc_total, price, cost_usd = pack["name"], pack["amount"], price_in(pack["cost_usd"], body.currency), pack["cost_usd"]
+        title, uc_total, price, cost_usd = pack["name"], pack["amount"], uzs_price(pack["cost_usd"]), pack["cost_usd"]
         first_offer = order_items[0]["offer_id"]
     else:
         try:
@@ -470,14 +442,14 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
             if not q["ok"]:
                 raise HTTPException(422, "bad_amount")
             order_items = q["items"]
-            title, uc_total, price, cost_usd = f"{q['uc']} UC", q["uc"], price_in(q["cost_usd"], body.currency), q["cost_usd"]
+            title, uc_total, price, cost_usd = f"{q['uc']} UC", q["uc"], uzs_price(q["cost_usd"]), q["cost_usd"]
             first_offer = order_items[0]["offer_id"]
         else:
             pack = next((p for p in items if p["offer_id"] == body.offer_id and p["section"] == "uc"), None)
             if not pack:
                 raise HTTPException(404, "pack_not_found")
             order_items = [{"offer_id": pack["offer_id"], "name": pack["name"], "uc": pack["uc"], "qty": 1}]
-            title, uc_total, price, cost_usd = pack["name"], pack["uc"], price_in(pack["cost_usd"], body.currency), pack["cost_usd"]
+            title, uc_total, price, cost_usd = pack["name"], pack["uc"], uzs_price(pack["cost_usd"]), pack["cost_usd"]
             first_offer = pack["offer_id"]
 
     if not await _wallet_covers(cost_usd):
@@ -514,7 +486,7 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             order_id, user["tg_id"], body.game, first_offer, title, uc_total, pid, nick,
-            price, body.currency, cost_usd, "awaiting_payment", provider_for(body.currency), now, now,
+            price, "UZS", cost_usd, "awaiting_payment", PAYMENT_PROVIDER, now, now,
             now + PAYMENT_TTL_MIN * 60, json.dumps(order_items), section,
         ),
     )
@@ -527,7 +499,7 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
     order = await db.get_order(order_id)
     await notify.admin_event(
         "order_created",
-        f"🛒 <b>Yangi buyurtma</b> · {db.code(order_id)}\n{title} · {_money(price, body.currency)}\n"
+        f"🛒 <b>Yangi buyurtma</b> · {db.code(order_id)}\n{title} · {_money(price, "UZS")}\n"
         + (
             "Kod buyurtmasi (kod to'lovdan keyin yuboriladi)"
             if g is not None and g.delivery == "code"
@@ -567,7 +539,7 @@ async def cancel_order(order_id: str, user: dict = Depends(current_user)):
 @router.post("/orders/{order_id}/mock-pay")
 async def mock_pay(order_id: str, user: dict = Depends(current_user)):
     order = await _own_order(order_id, user)
-    if provider_for(order["currency"]) != "mock":
+    if PAYMENT_PROVIDER != "mock":
         raise HTTPException(404, "not_found")
     if order["status"] != "awaiting_payment":
         raise HTTPException(409, "cannot_pay")

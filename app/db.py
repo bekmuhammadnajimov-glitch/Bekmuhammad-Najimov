@@ -82,6 +82,11 @@ async def init() -> None:
         await _db.execute("ALTER TABLE users ADD COLUMN currency TEXT")
     if "setup_done" not in ucols:
         await _db.execute("ALTER TABLE users ADD COLUMN setup_done INTEGER NOT NULL DEFAULT 0")
+    # roubles were removed: everybody pays in so'm, nobody is left waiting at the old currency question,
+    # and an unpaid order written in roubles can no longer be paid (its number would be read as so'm)
+    await _db.execute("UPDATE users SET currency = 'UZS' WHERE currency IS NOT 'UZS'")
+    await _db.execute("UPDATE users SET setup_done = 1 WHERE lang IS NOT NULL AND setup_done = 0")
+    await _db.execute("UPDATE orders SET status = 'cancelled', updated_at = ? WHERE currency = 'RUB' AND status = 'awaiting_payment'", (now(),))
     if "kb_lang" not in ucols:  # the language of the app button under the message field this person was last sent (see botmenu / bot_handlers)
         await _db.execute("ALTER TABLE users ADD COLUMN kb_lang TEXT")
     # amounts can now be in so'm or rubles: `amount` + `currency` replace `amount_uzs`

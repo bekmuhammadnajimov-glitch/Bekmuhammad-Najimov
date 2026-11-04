@@ -42,11 +42,9 @@ PUBG_ORDER_CATEGORY = "pubg_mobile_auto"
 PUBG_VALIDATE_CATEGORY = "pubg_mobile"
 
 USD_UZS_RATE = float(os.getenv("USD_UZS_RATE", "12800"))
-USD_RUB_RATE = float(os.getenv("USD_RUB_RATE", "85.5"))
 MARKUP_PERCENT = float(os.getenv("MARKUP_PERCENT", "12"))
 ROUND_TO = int(os.getenv("ROUND_TO", "1000"))  # so'm
-RUB_ROUND_TO = int(os.getenv("RUB_ROUND_TO", "1"))  # rubles
-CURRENCIES = ("UZS", "RUB")
+CURRENCIES = ("UZS",)  # so'm is the only currency
 
 PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "mock").strip().lower()  # mock | manual_card | click (so'm payments)
 
@@ -58,17 +56,9 @@ CLICK_SECRET_KEY = os.getenv("CLICK_SECRET_KEY", "").strip()
 CLICK_READY = bool(CLICK_SERVICE_ID and CLICK_MERCHANT_ID and CLICK_SECRET_KEY)
 
 
-def provider_for(currency: str) -> str:
-    """Click only handles so'm. Rubles are paid by card transfer (or the demo button in mock mode)."""
-    if currency == "RUB":
-        return "mock" if PAYMENT_PROVIDER == "mock" else "manual_card"
-    return PAYMENT_PROVIDER
 CARD_NUMBER = os.getenv("CARD_NUMBER", "").strip()  # so'm card
 CARD_HOLDER = os.getenv("CARD_HOLDER", "").strip()
 CARD_BANK = os.getenv("CARD_BANK", "").strip()  # e.g. "Humo · Hamkorbank", shown under the card number
-CARD_RUB_NUMBER = os.getenv("CARD_RUB_NUMBER", "").strip()  # ruble card
-CARD_RUB_HOLDER = os.getenv("CARD_RUB_HOLDER", "").strip()
-CARD_RUB_BANK = os.getenv("CARD_RUB_BANK", "").strip()
 PAYMENT_TTL_MIN = 30
 # Secret that lets the Click link report money that arrived on the card (POST /api/incoming). Empty = endpoint off.
 INCOMING_SECRET = os.getenv("INCOMING_SECRET", "").strip()

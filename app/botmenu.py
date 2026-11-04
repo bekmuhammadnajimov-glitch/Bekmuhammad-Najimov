@@ -12,18 +12,18 @@ log = logging.getLogger("nexdonate.botmenu")
 
 # What every customer sees. "admin" writes to the owner (the owner's own list has the admin panel under the same name).
 PUBLIC = {
-    "uz": [("start", "Boshlash"), ("lang", "Til"), ("currency", "So'm / Rubl"), ("admin", "Admin")],
-    "ru": [("start", "Начать"), ("lang", "Язык"), ("currency", "Сум / Рубль"), ("admin", "Админ")],
+    "uz": [("start", "Boshlash"), ("lang", "Til"), ("admin", "Admin")],
+    "ru": [("start", "Начать"), ("lang", "Язык"), ("admin", "Админ")],
 }
 # What the owner sees: the same, but "admin" is the panel, plus the owner's tools.
 OWNER = {
-    "uz": [("start", "Boshlash"), ("lang", "Til"), ("currency", "So'm / Rubl"), ("admin", "Admin panel"), ("users", "Foydalanuvchilar ro'yxati"),
+    "uz": [("start", "Boshlash"), ("lang", "Til"), ("admin", "Admin panel"), ("users", "Foydalanuvchilar ro'yxati"),
            ("count", "Nechta odam bor"), ("supplier", "Yetkazib beruvchi holati"), ("id", "Mening Telegram ID'im")],
-    "ru": [("start", "Начать"), ("lang", "Язык"), ("currency", "Сум / Рубль"), ("admin", "Админ-панель"), ("users", "Список пользователей"),
+    "ru": [("start", "Начать"), ("lang", "Язык"), ("admin", "Админ-панель"), ("users", "Список пользователей"),
            ("count", "Сколько людей"), ("supplier", "Статус поставщика"), ("id", "Мой Telegram ID")],
 }
 # For people who have not chosen a language yet: Telegram's own language decides, and the default shows both.
-DEFAULT_BOTH = [("start", "Boshlash / Начать"), ("lang", "Til / Язык"), ("currency", "So'm / Rubl · Сум / Рубль"), ("admin", "Admin / Админ")]
+DEFAULT_BOTH = [("start", "Boshlash / Начать"), ("lang", "Til / Язык"), ("admin", "Admin / Админ")]
 
 
 def version() -> str:

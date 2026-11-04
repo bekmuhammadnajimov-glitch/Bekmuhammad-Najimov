@@ -19,9 +19,6 @@ from .config import (
     CARD_BANK,
     CARD_HOLDER,
     CARD_NUMBER,
-    CARD_RUB_BANK,
-    CARD_RUB_HOLDER,
-    CARD_RUB_NUMBER,
     FULFILLMENT_MODE,
     PAYMENT_PROVIDER,
     PAYMENT_TTL_MIN,
@@ -38,7 +35,7 @@ TEXT = {
         "welcome": "Paketni tanlang, ID kiriting, to'lang — qolganini biz bajaramiz.",
         "cancel_btn": "❌ Bekor qilish",
         "pay_instr": "💳 <b>To'lov</b> · <code>{code}</code>\n\nMahsulot: <b>{title}</b>\n{recipient_line}\n\nTo'lov summasi: <b>{amount}</b>\n❗️ <b>Aynan shu summani</b> o'tkazing.\n\nKarta raqami (bosib nusxalang):\n<code>{card}</code>\n{card_info}\n⏳ {minutes} daqiqa ichida to'lang.\nTo'lagach <b>chek skrinshotini</b> shu chatga yuboring 👇",
-        "pay_no_card": "Kechirasiz, bu valyutada to'lov hozircha ulanmagan. /currency orqali boshqa valyutani tanlang yoki admin bilan bog'laning.",
+        "pay_no_card": "Kechirasiz, to'lov hozircha ulanmagan. Iltimos, admin bilan bog'laning.",
         "pay_expired": "⌛️ Bu buyurtmaning to'lov muddati tugagan. Ilovada yangi buyurtma bering 👇",
         "pay_done": "Bu buyurtma allaqachon to'langan yoki bekor qilingan.",
         "receipt_ok": "✅ <b>Chek qabul qilindi</b> · <code>{code}</code>\nTo'lov tekshirilmoqda, odatda bir necha daqiqa ketadi. Natijani shu yerga yozamiz.",
@@ -48,19 +45,16 @@ TEXT = {
         "order_cancelled": "🚫 Buyurtma bekor qilindi.",
         "open": "🚀 Ochish",
         "admin": "💬 Admin",
-        "ask_currency": "💳 <b>To'lov valyutasini tanlang</b>\n\nSo'm — O'zbekiston kartalari uchun,\nrubl — Rossiya kartalari uchun.",
-        "prefs": "⚙️ Til: <b>{lang}</b> · Valyuta: <b>{cur}</b>\nO'zgartirish: /lang · /currency",
+        "prefs": "⚙️ Til: <b>{lang}</b>\nO'zgartirish: /lang",
         "lang_set": "✅ Til o'zgartirildi: <b>{lang}</b>",
         "contact": "Savol yoki muammo bo'lsa, adminga yozing 👇",
-        "cur_set": "✅ To'lov valyutasi: <b>{cur}</b>",
         "lang_name": "O'zbekcha",
-        "cur_name": {"UZS": "so'm", "RUB": "rubl"},
     },
     "ru": {
         "welcome": "Выберите пакет, введите ID, оплатите — остальное мы сделаем сами.",
         "cancel_btn": "❌ Отменить",
         "pay_instr": "💳 <b>Оплата</b> · <code>{code}</code>\n\nТовар: <b>{title}</b>\n{recipient_line}\n\nСумма к оплате: <b>{amount}</b>\n❗️ Переведите <b>ровно эту сумму</b>.\n\nНомер карты (нажмите, чтобы скопировать):\n<code>{card}</code>\n{card_info}\n⏳ Оплатите в течение {minutes} минут.\nПосле оплаты отправьте <b>скриншот чека</b> в этот чат 👇",
-        "pay_no_card": "Извините, оплата в этой валюте пока не подключена. Выберите другую валюту через /currency или напишите админу.",
+        "pay_no_card": "Извините, оплата пока не подключена. Пожалуйста, свяжитесь с админом.",
         "pay_expired": "⌛️ Время оплаты этого заказа истекло. Оформите новый заказ в приложении 👇",
         "pay_done": "Этот заказ уже оплачен или отменён.",
         "receipt_ok": "✅ <b>Чек принят</b> · <code>{code}</code>\nОплата проверяется, обычно это занимает несколько минут. Результат напишем сюда.",
@@ -70,13 +64,10 @@ TEXT = {
         "order_cancelled": "🚫 Заказ отменён.",
         "open": "🚀 Открыть",
         "admin": "💬 Админ",
-        "ask_currency": "💳 <b>Выберите валюту оплаты</b>\n\nСум — для карт Узбекистана,\nрубль — для карт России.",
-        "prefs": "⚙️ Язык: <b>{lang}</b> · Валюта: <b>{cur}</b>\nИзменить: /lang · /currency",
+        "prefs": "⚙️ Язык: <b>{lang}</b>\nИзменить: /lang",
         "lang_set": "✅ Язык изменён: <b>{lang}</b>",
         "contact": "Если есть вопрос или проблема, напишите админу 👇",
-        "cur_set": "✅ Валюта оплаты: <b>{cur}</b>",
         "lang_name": "Русский",
-        "cur_name": {"UZS": "сум", "RUB": "рубль"},
     },
 }
 ASK_LANGUAGE = "🌐 <b>Tilni tanlang / Выберите язык</b>"
@@ -125,18 +116,6 @@ def _lang_kb(prefix: str = "ob") -> InlineKeyboardMarkup:
     )
 
 
-def _currency_kb(lang: str, prefix: str = "ob") -> InlineKeyboardMarkup:
-    names = TEXT[lang]["cur_name"]
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text=f"🇺🇿 {names['UZS'].capitalize()} (UZS)", callback_data=f"{prefix}:cur:UZS"),
-                InlineKeyboardButton(text=f"🇷🇺 {names['RUB'].capitalize()} (RUB)", callback_data=f"{prefix}:cur:RUB"),
-            ]
-        ]
-    )
-
-
 async def _ask_language(message: Message) -> None:
     await message.answer(ASK_LANGUAGE, reply_markup=_lang_kb())
 
@@ -148,7 +127,7 @@ async def _send_welcome(target: Message, user_row: dict) -> None:
     """The normal start message (banner + Open/Admin buttons) in the user's language, with their saved choices."""
     lang = user_row["lang"] or "uz"
     t = TEXT[lang]
-    caption = f"{t['welcome']}\n\n" + t["prefs"].format(lang=t["lang_name"], cur=t["cur_name"].get(user_row["currency"] or "UZS", "so'm"))
+    caption = f"{t['welcome']}\n\n" + t["prefs"].format(lang=t["lang_name"])
     banner = WEBAPP_DIR / "assets" / f"banner_{lang}.png"
     if banner.exists():
         sent = await target.answer_photo(_banner_ids.get(lang) or FSInputFile(banner), caption=caption, reply_markup=_main_kb(lang))
@@ -160,7 +139,7 @@ async def _send_welcome(target: Message, user_row: dict) -> None:
 
 
 async def _onboard_or(message: Message, then) -> None:
-    """New users (language/currency not chosen yet) are asked first; everyone else goes straight on."""
+    """New users (language not chosen yet) are asked first; everyone else goes straight on."""
     await _touch(message.from_user)
     row = await _user_row(message.from_user.id)
     if not row["setup_done"]:
@@ -180,7 +159,7 @@ async def start(message: Message, command: CommandObject) -> None:
 @dp.message(Command("settings"))
 async def settings(message: Message) -> None:
     await _touch(message.from_user)
-    await _ask_language(message)  # same two questions again: language, then currency (older chats still know this command)
+    await _ask_language(message)  # older chats still know this command
 
 
 @dp.message(Command("lang"))
@@ -191,17 +170,6 @@ async def lang_cmd(message: Message) -> None:
     if not row["setup_done"]:
         return await _ask_language(message)
     await message.answer(ASK_LANGUAGE, reply_markup=_lang_kb("set"))
-
-
-@dp.message(Command("currency"))
-async def currency_cmd(message: Message) -> None:
-    """The menu's "So'm / Rubl": only the payment currency."""
-    await _touch(message.from_user)
-    row = await _user_row(message.from_user.id)
-    if not row["setup_done"]:
-        return await _ask_language(message)
-    lang = row["lang"] or "uz"
-    await message.answer(TEXT[lang]["ask_currency"], reply_markup=_currency_kb(lang, "set"))
 
 
 @dp.callback_query(F.data.startswith("set:"))
@@ -215,12 +183,6 @@ async def setting_cb(cb: CallbackQuery) -> None:
         row = await _user_row(cb.from_user.id)
         await _sync_menu(row)  # the "/" list now speaks the new language
         return await cb.answer("✅")
-    if kind == "cur" and value in ("UZS", "RUB"):
-        await db.execute("UPDATE users SET currency = ? WHERE tg_id = ?", (value, cb.from_user.id))
-        row = await _user_row(cb.from_user.id)
-        t = TEXT[row["lang"] or "uz"]
-        await cb.message.edit_text(t["cur_set"].format(cur=t["cur_name"][value]))
-        return await cb.answer("✅")
     await cb.answer()
 
 
@@ -229,12 +191,17 @@ async def onboarding_cb(cb: CallbackQuery) -> None:
     await _touch(cb.from_user)
     _, kind, value = cb.data.split(":", 2)
     if kind == "lang" and value in ("uz", "ru"):
-        await db.execute("UPDATE users SET lang = ? WHERE tg_id = ?", (value, cb.from_user.id))
+        await db.execute("UPDATE users SET lang = ?, currency = 'UZS', setup_done = 1 WHERE tg_id = ?", (value, cb.from_user.id))
         await botmenu.ensure_commands(cb.from_user.id, value, cb.from_user.id in ADMIN_IDS)
-        await cb.message.edit_text(TEXT[value]["ask_currency"], reply_markup=_currency_kb(value))
-        return await cb.answer()
-    if kind == "cur" and value in ("UZS", "RUB"):
-        await db.execute("UPDATE users SET currency = ?, setup_done = 1 WHERE tg_id = ?", (value, cb.from_user.id))
+        row = await _user_row(cb.from_user.id)
+        try:
+            await cb.message.delete()
+        except Exception:
+            pass
+        await _send_welcome(cb.message, row)
+        return await cb.answer("✅")
+    if kind == "cur":  # a currency button from an older message: there is only so'm now, so the first questions are finished
+        await db.execute("UPDATE users SET currency = 'UZS', setup_done = 1 WHERE tg_id = ?", (cb.from_user.id,))
         row = await _user_row(cb.from_user.id)
         try:
             await cb.message.delete()
@@ -251,12 +218,10 @@ async def my_id(message: Message) -> None:
 
 
 def _money(amount: int, currency: str) -> str:
-    return f"{amount:,} {'₽' if currency == 'RUB' else 'so' + chr(39) + 'm'}".replace(",", " ")
+    return f"{amount:,} so'm".replace(",", " ")
 
 
-def _card_for(currency: str) -> tuple[str, str]:
-    if currency == "RUB":
-        return CARD_RUB_NUMBER, " · ".join(p for p in (CARD_RUB_BANK, CARD_RUB_HOLDER) if p)
+def _card_for() -> tuple[str, str]:
     return CARD_NUMBER, " · ".join(p for p in (CARD_BANK, CARD_HOLDER) if p)
 
 
@@ -278,9 +243,9 @@ async def _show_payment(message: Message, order_id: str) -> None:
         g = REGISTRY.get(order["game"])
         who = "" if (g and g.delivery == "code") else (("@" if g and g.recipient == "username" else "") + (order["player_id"] or ""))
         return await notify.wallet_short(message.from_user.id, order["offer_name"] or "", g.name if g else "PUBG Mobile", who)
-    card, card_info = _card_for(order["currency"])
+    card, card_info = _card_for()
     if not card:
-        await notify.admin_event("config", f"⚠️ <b>{order['currency']} uchun karta kiritilmagan</b>, mijoz to'lay olmadi · {db.code(order_id)}", order)
+        await notify.admin_event("config", f"⚠️ <b>Karta kiritilmagan</b>, mijoz to'lay olmadi · {db.code(order_id)}", order)
         return await message.answer(t["pay_no_card"])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t["cancel_btn"], callback_data=f"ord:cancel:{order_id}")]])
     await message.answer(

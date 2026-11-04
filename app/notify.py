@@ -164,7 +164,7 @@ def _admin_order_text(order: dict, title: str) -> str:
         f"<b>{db.code(order['id'])}</b>\n"
         f"Mahsulot: <b>{html.escape(order.get('offer_name') or '')}</b>\n"
         f"{recipient_line(order, 'uz')}\n"
-        f"Summa: <b>{order['amount']:,}</b> {'₽' if order.get('currency') == 'RUB' else 'so' + chr(39) + 'm'}".replace(",", " ")
+        f"Summa: <b>{order['amount']:,}</b> so'm".replace(",", " ")
         + f"\nMijoz: <code>{order['tg_id']}</code>"
     )
 
