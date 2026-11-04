@@ -6,7 +6,7 @@ Click link). A screenshot alone is never trusted: it is shown to the admin, who 
 import logging
 import time
 
-from . import db, fulfillment, notify
+from . import db, fulfillment, notify, wallet
 from .config import AUTO_MATCH_WINDOW_MIN, PAYMENT_TTL_MIN
 
 log = logging.getLogger("nexdonate.payments")
@@ -17,11 +17,28 @@ def _fmt(amount: int, currency: str) -> str:
     return f"{amount:,} so'm".replace(",", " ")
 
 
+async def credit_topup_order(order: dict, by: str, note: str = "") -> bool:
+    """The money of a top-up has arrived: it becomes the customer's balance (once), the customer and the owner are told."""
+    done = await wallet.credit_topup(order["id"], note=by)
+    if done is None:
+        return False
+    paid, balance = done
+    await notify.send_topup_done(paid, balance)
+    await notify.admin_event(
+        "topup_done",
+        f"💰 <b>Balans to'ldirildi</b> · {db.code(order['id'])} · +{_fmt(paid['amount'], paid['currency'])}\nKim: {by}{(' · ' + note) if note else ''}\nMijozning balansi: <b>{_fmt(balance, 'UZS')}</b>",
+        paid,
+    )
+    return True
+
+
 async def confirm_order(order_id: str, by: str, note: str = "") -> bool:
-    """Mark paid and start delivery. Safe to call twice: only the first call wins."""
+    """Mark paid and start delivery (a top-up becomes balance instead). Safe to call twice: only the first call wins."""
     order = await db.get_order(order_id)
     if not order or order["status"] not in ("awaiting_payment", "payment_review"):
         return False
+    if wallet.is_topup(order):
+        return await credit_topup_order(order, by, note)
     await db.update_order(order_id, status="paid", error=None)
     order = await db.get_order(order_id)
     await notify.send_user(order, "payment_confirmed")

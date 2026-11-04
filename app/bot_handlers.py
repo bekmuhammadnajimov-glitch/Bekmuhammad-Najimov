@@ -12,7 +12,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-from . import api, botmenu, db, fulfillment, notify, payments
+from . import api, botmenu, db, fulfillment, notify, payments, wallet
 from .games import REGISTRY
 from .config import (
     ADMIN_IDS,
@@ -35,6 +35,7 @@ TEXT = {
         "welcome": "Paketni tanlang, ID kiriting, to'lang — qolganini biz bajaramiz.",
         "cancel_btn": "❌ Bekor qilish",
         "pay_instr": "💳 <b>To'lov</b> · <code>{code}</code>\n\nMahsulot: <b>{title}</b>\n{recipient_line}\n\nTo'lov summasi: <b>{amount}</b>\n❗️ <b>Aynan shu summani</b> o'tkazing.\n\nKarta raqami (bosib nusxalang):\n<code>{card}</code>\n{card_info}\n⏳ {minutes} daqiqa ichida to'lang.\nTo'lagach <b>chek skrinshotini</b> shu chatga yuboring 👇",
+        "pay_instr_topup": "💳 <b>Balansni to'ldirish</b> · <code>{code}</code>\n\nSumma: <b>{amount}</b>\n❗️ <b>Aynan shu summani</b> o'tkazing.\n\nKarta raqami (bosib nusxalang):\n<code>{card}</code>\n{card_info}\n⏳ {minutes} daqiqa ichida to'lang.\nTo'lagach <b>chek skrinshotini</b> shu chatga yuboring 👇\n\nChekni tekshirgach, balansingiz to'ldiriladi.",
         "pay_no_card": "Kechirasiz, to'lov hozircha ulanmagan. Iltimos, admin bilan bog'laning.",
         "pay_expired": "⌛️ Bu buyurtmaning to'lov muddati tugagan. Ilovada yangi buyurtma bering 👇",
         "pay_done": "Bu buyurtma allaqachon to'langan yoki bekor qilingan.",
@@ -54,6 +55,7 @@ TEXT = {
         "welcome": "Выберите пакет, введите ID, оплатите — остальное мы сделаем сами.",
         "cancel_btn": "❌ Отменить",
         "pay_instr": "💳 <b>Оплата</b> · <code>{code}</code>\n\nТовар: <b>{title}</b>\n{recipient_line}\n\nСумма к оплате: <b>{amount}</b>\n❗️ Переведите <b>ровно эту сумму</b>.\n\nНомер карты (нажмите, чтобы скопировать):\n<code>{card}</code>\n{card_info}\n⏳ Оплатите в течение {minutes} минут.\nПосле оплаты отправьте <b>скриншот чека</b> в этот чат 👇",
+        "pay_instr_topup": "💳 <b>Пополнение баланса</b> · <code>{code}</code>\n\nСумма: <b>{amount}</b>\n❗️ Переведите <b>ровно эту сумму</b>.\n\nНомер карты (нажмите, чтобы скопировать):\n<code>{card}</code>\n{card_info}\n⏳ Оплатите в течение {minutes} мин.\nПосле оплаты отправьте <b>скриншот чека</b> в этот чат 👇\n\nПосле проверки чека баланс будет пополнен.",
         "pay_no_card": "Извините, оплата пока не подключена. Пожалуйста, свяжитесь с админом.",
         "pay_expired": "⌛️ Время оплаты этого заказа истекло. Оформите новый заказ в приложении 👇",
         "pay_done": "Этот заказ уже оплачен или отменён.",
@@ -238,7 +240,7 @@ async def _show_payment(message: Message, order_id: str) -> None:
         return await message.answer(t["pay_done"])
     if order["expires_at"] < db.now():
         return await message.answer(t["pay_expired"], reply_markup=_main_kb(lang))
-    if not await api._wallet_covers(0):  # the supplier wallet is not what it was when the order was taken (this order counts as waiting)
+    if not wallet.is_topup(order) and not await api._wallet_covers(0):  # the supplier wallet is not what it was when the order was taken (a top-up needs no supplier)
         await db.update_order(order_id, status="cancelled")  # so it stops holding money back from others
         g = REGISTRY.get(order["game"])
         who = "" if (g and g.delivery == "code") else (("@" if g and g.recipient == "username" else "") + (order["player_id"] or ""))
@@ -248,14 +250,18 @@ async def _show_payment(message: Message, order_id: str) -> None:
         await notify.admin_event("config", f"⚠️ <b>Karta kiritilmagan</b>, mijoz to'lay olmadi · {db.code(order_id)}", order)
         return await message.answer(t["pay_no_card"])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t["cancel_btn"], callback_data=f"ord:cancel:{order_id}")]])
-    await message.answer(
-        t["pay_instr"].format(
+    if wallet.is_topup(order):
+        text = t["pay_instr_topup"].format(
+            code=db.code(order_id), amount=_money(order["amount"], order["currency"]), card=html.escape(card),
+            card_info=(html.escape(card_info) + "\n") if card_info else "", minutes=PAYMENT_TTL_MIN,
+        )
+    else:
+        text = t["pay_instr"].format(
             code=db.code(order_id), title=html.escape(order["offer_name"] or ""), recipient_line=notify.recipient_line(order, lang),
             amount=_money(order["amount"], order["currency"]), card=html.escape(card),
             card_info=(html.escape(card_info) + "\n") if card_info else "", minutes=PAYMENT_TTL_MIN,
-        ),
-        reply_markup=kb,
-    )
+        )
+    await message.answer(text, reply_markup=kb)
     if not order["pay_opened_at"]:
         await db.update_order(order_id, pay_opened_at=db.now())
         await notify.admin_event("pay_opened", f"➡️ <b>Mijoz botga o'tdi, karta ko'rsatildi</b> · {db.code(order_id)} · {_money(order['amount'], order['currency'])}", order)
@@ -309,12 +315,12 @@ async def receipt(message: Message) -> None:
 
 STATUS_ICON = {
     "awaiting_payment": "🕓", "payment_review": "🧾", "paid": "💳", "processing": "⚙️",
-    "completed": "✅", "failed": "❗️", "cancelled": "🚫", "expired": "⌛️",
+    "completed": "✅", "failed": "❗️", "cancelled": "🚫", "expired": "⌛️", "refunded": "↩️",
 }
 STATUS_UZ = {
     "awaiting_payment": "to'lov kutilmoqda", "payment_review": "chek tekshiruvda", "paid": "to'langan",
     "processing": "yuborilmoqda", "completed": "yetkazilgan", "failed": "xatolik",
-    "cancelled": "bekor qilingan", "expired": "muddati o'tgan",
+    "cancelled": "bekor qilingan", "expired": "muddati o'tgan", "refunded": "pul qaytarilgan",
 }
 
 
@@ -333,13 +339,15 @@ def _admin_kb(extra: list[list[InlineKeyboardButton]] | None = None) -> InlineKe
 
 
 async def _panel_text() -> str:
-    rows = await db.fetchall(
-        "SELECT status, currency, COUNT(*) AS n, COALESCE(SUM(amount),0) AS s FROM orders GROUP BY status, currency ORDER BY status"
+    def lines_of(rows: list[dict]) -> list[str]:
+        return [f"{STATUS_ICON.get(r['status'], '•')} {STATUS_UZ.get(r['status'], r['status'])}: <b>{r['n']}</b> · {_money(r['s'], r['currency'])}" for r in rows]
+
+    purchases = await db.fetchall(
+        "SELECT status, currency, COUNT(*) AS n, COALESCE(SUM(amount),0) AS s FROM orders WHERE game != 'topup' GROUP BY status, currency ORDER BY status"
     )
-    lines = [
-        f"{STATUS_ICON.get(r['status'], '•')} {STATUS_UZ.get(r['status'], r['status'])}: <b>{r['n']}</b> · {_money(r['s'], r['currency'])}"
-        for r in rows
-    ] or ["Hozircha buyurtmalar yo'q"]
+    topups = await db.fetchall(
+        "SELECT status, currency, COUNT(*) AS n, COALESCE(SUM(amount),0) AS s FROM orders WHERE game = 'topup' GROUP BY status, currency ORDER BY status"
+    )
     users = (await db.fetchone("SELECT COUNT(*) AS n FROM users"))["n"]
     try:
         bal = await fulfillment.supplier.balance()
@@ -350,7 +358,10 @@ async def _panel_text() -> str:
         "🛠 <b>Admin panel</b>\n"
         f"Yetkazish: <code>{FULFILLMENT_MODE}</code> · to'lov: <code>{PAYMENT_PROVIDER}</code>\n"
         f"{fulfillment.supplier.name} balans: <b>{supplier}</b>\n"
-        f"Foydalanuvchilar: <b>{users}</b>\n\n" + "\n".join(lines)
+        f"Foydalanuvchilar: <b>{users}</b>\n"
+        f"Mijozlar balansi jami: <b>{_money(await wallet.total_balances(), 'UZS')}</b>\n\n"
+        "<b>Buyurtmalar</b>\n" + "\n".join(lines_of(purchases) or ["Hozircha buyurtmalar yo'q"])
+        + ("\n\n<b>Balans to'ldirishlar</b>\n" + "\n".join(lines_of(topups)) if topups else "")
     )
 
 
@@ -441,7 +452,7 @@ async def _users_page(page: int) -> tuple[str, InlineKeyboardMarkup | None]:
     pages = max(1, -(-total // USERS_PER_PAGE))
     page = min(max(page, 0), pages - 1)
     rows = await db.fetchall(
-        """SELECT u.*, (SELECT COUNT(*) FROM orders o WHERE o.tg_id = u.tg_id AND o.status = 'completed') AS bought
+        """SELECT u.*, (SELECT COUNT(*) FROM orders o WHERE o.tg_id = u.tg_id AND o.status = 'completed' AND o.game != 'topup') AS bought
            FROM users u ORDER BY COALESCE(u.last_seen, u.created_at) DESC LIMIT ? OFFSET ?""",
         (USERS_PER_PAGE, page * USERS_PER_PAGE),
     )
@@ -492,7 +503,7 @@ async def count_cmd(message: Message) -> None:
     today = (await one("SELECT COUNT(*) AS n FROM users WHERE created_at >= ?", midnight))["n"]
     week = (await one("SELECT COUNT(*) AS n FROM users WHERE created_at >= ?", now - 7 * day))["n"]
     active = (await one("SELECT COUNT(*) AS n FROM users WHERE COALESCE(last_seen, created_at) >= ?", now - 7 * day))["n"]
-    buyers = (await one("SELECT COUNT(DISTINCT tg_id) AS n FROM orders WHERE status = 'completed'"))["n"]
+    buyers = (await one("SELECT COUNT(DISTINCT tg_id) AS n FROM orders WHERE status = 'completed' AND game != 'topup'"))["n"]
     await message.answer(
         "📊 <b>Bot foydalanuvchilari</b>\n\n"
         f"Jami: <b>{total}</b>\n"
@@ -552,6 +563,30 @@ async def payment_decision(cb: CallbackQuery) -> None:
     except Exception:
         pass
     await cb.answer("Bajarildi")
+
+
+@dp.callback_query(F.data.startswith("refund:"))
+async def refund_order(cb: CallbackQuery) -> None:
+    """Admin only: a purchase that failed goes back to the customer's balance (once)."""
+    if cb.from_user.id not in ADMIN_IDS:
+        return await cb.answer("Ruxsat yo'q", show_alert=True)
+    order_id = cb.data.split(":", 1)[1]
+    who = html.escape(cb.from_user.full_name)
+    done = await wallet.refund_order(order_id, note=f"admin {who}")
+    if done is None:
+        return await cb.answer("Qaytarib bo'lmaydi: u allaqachon qaytarilgan yoki xatolik holatida emas", show_alert=True)
+    order, balance = done
+    await notify.send_refund(order, balance)
+    await notify.admin_event(
+        "refunded",
+        f"↩️ <b>Pul balansga qaytarildi</b> · {db.code(order_id)} · {_money(order['amount'], order['currency'])}\nKim: admin {who}\nMijozning balansi: <b>{_money(balance, 'UZS')}</b>",
+        order,
+    )
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await cb.answer("Balansga qaytarildi")
 
 
 @dp.callback_query(F.data.startswith("retry:"))

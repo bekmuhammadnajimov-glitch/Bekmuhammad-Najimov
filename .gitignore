@@ -5,3 +5,9 @@ __pycache__/
 *.db
 data/
 node_modules/
+railway-vars.env
+
+promo/.env
+promo/out/
+promo/cache/
+promo/node_modules/

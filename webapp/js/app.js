@@ -46,6 +46,9 @@ const ICONS = {
   send: '<path d="M21 3L3 11l7 3 3 7z"/><path d="M10 14l11-11"/>',
   card: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 10h18M7 15h4"/>',
   bag: '<path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 016 0v2"/>',
+  wallet: '<path d="M4 7.5A2.5 2.5 0 016.5 5H18v3"/><path d="M4 7.5V17a2 2 0 002 2h13a1 1 0 001-1v-2.5"/><path d="M21 9.5h-5a2.25 2.25 0 000 4.5h5z"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/>',
 };
 const ic = (name, cls = '') =>
   `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -188,12 +191,14 @@ const S = {
   tab: 'uc', game: 'pubg', region: '', gpacks: null,
   stack: [{ name: 'home' }],
   co: null, vseq: 0, vtimer: null, timer: null, viewOrder: null, ordersList: null,
+  bal: null, confirm: null, topup: { amount: '' },
 };
-const freshCo = () => ({ pack: null, pid: '', confirm: '', nick: null, vstate: 'idle', save: true, order: null, orderKey: null, receipt: null, busy: false });
+const freshCo = () => ({ pack: null, pid: '', confirm: '', nick: null, vstate: 'idle', save: true, order: null, orderKey: null, receipt: null, busy: false, key: null });
+const newKey = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
 S.co = freshCo();
 
 const TABS = ['home', 'orders', 'support', 'profile'];
-const FINAL = ['completed', 'failed', 'cancelled', 'expired'];
+const FINAL = ['completed', 'failed', 'cancelled', 'expired', 'refunded'];
 
 /* ---------------------------------------------------------------- helpers */
 const haptic = (k = 'light') => { try { tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred(k); } catch (_) {} };
@@ -236,9 +241,9 @@ async function api(path, opts = {}) {
   if (body && !(body instanceof FormData)) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(body); }
   const res = await fetch('/api' + path, { method: opts.method || 'GET', headers, body });
   if (!res.ok) {
-    let code = 'error';
-    try { const j = await res.json(); if (typeof j.detail === 'string') code = j.detail; } catch (_) {}
-    throw Object.assign(new Error(code), { status: res.status, code });
+    let code = 'error', data = null;
+    try { data = await res.json(); if (typeof data.detail === 'string') code = data.detail; } catch (_) {}
+    throw Object.assign(new Error(code), { status: res.status, code, data });
   }
   return res.json();
 }
@@ -247,13 +252,14 @@ const errText = (e) => {
   const map = {
     invalid_id: 'err_invalid_id', too_many_pending: 'err_pending', rate_limited: 'err_rate',
     catalog_unavailable: 'err_catalog', validation_unavailable: 'err_validation', unavailable: 'err_unavailable', id_mismatch: 'id_mismatch', cannot_pay: 'err_state', cannot_cancel: 'err_state',
+    insufficient_balance: 'err_insufficient', bad_topup: 'err_bad_topup',
   };
   return t(map[e.code] || 'err_generic');
 };
 
 const when = (ts) => new Date(ts * 1000).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
-const STATUS_TONE = { awaiting_payment: 'warn', payment_review: 'warn', paid: 'gold', processing: 'gold', completed: 'ok', failed: 'err', cancelled: 'mute', expired: 'mute' };
+const STATUS_TONE = { awaiting_payment: 'warn', payment_review: 'warn', paid: 'gold', processing: 'gold', completed: 'ok', failed: 'err', cancelled: 'mute', expired: 'mute', refunded: 'gold' };
 const tag = (st) => `<span class="tag ${STATUS_TONE[st] || 'mute'}">${t('st_' + st)}</span>`;
 
 /* ---------------------------------------------------------------- navigation */
@@ -290,9 +296,28 @@ const cta = (total, label, disabled, act, hidden = false) => `<div class="cta-ba
   <div class="cta-sum"><span>${t('total')}</span><b id="cta-total">${total || '—'}</b></div>
   <button class="btn gold" id="cta-btn" data-act="${act}" ${disabled ? 'disabled' : ''}>${label} ${ic('arrow', 'sm')}</button></div>`;
 
-const orderRow = (o) => `<button class="orow" data-act="open-order" data-id="${o.id}">
-  ${gameIcon(o.game || 'pubg', gameOf(o.game || 'pubg').name)}<div class="mid"><div class="t">${esc(orderTitle(o))}</div><div class="s">${o.code} · ${when(o.created_at)}</div></div>
-  <div class="end"><div class="a">${money(o.amount)}</div>${tag(o.status)}</div></button>`;
+const orderRow = (o) => {
+  const top = o.game === 'topup';
+  return `<button class="orow" data-act="open-order" data-id="${o.id}">
+  ${top ? `<span class="gicon wic">${ic('wallet')}</span>` : gameIcon(o.game || 'pubg', gameOf(o.game || 'pubg').name)}<div class="mid"><div class="t">${esc(top ? t('topup_title') : orderTitle(o))}</div><div class="s">${o.code} · ${when(o.created_at)}</div></div>
+  <div class="end"><div class="a">${top && o.status === 'completed' ? '+' : ''}${money(o.amount)}</div>${tag(o.status)}</div></button>`;
+};
+
+/* ---- balance: the bar on the home screen, the card in the profile, one line of the history ---- */
+const balanceBar = () => `<section class="balbar">
+  <div class="balbar-in"><span class="balbar-ic">${ic('wallet')}</span><div class="balbar-tx"><span>${t('balance')}</span><b>${money((S.user && S.user.balance) || 0)}</b></div></div>
+  <button class="btn gold sm" data-act="open-balance">${ic('plus', 'sm')}${t('topup_short')}</button></section>`;
+
+const histRow = (h) => {
+  const plus = h.amount > 0;
+  const title = h.kind === 'topup' ? t('bal_k_topup') : h.kind === 'refund' ? `${t('bal_k_refund')} · ${orderTitle(h)}` : orderTitle(h);
+  const icon = h.kind === 'purchase' ? 'bag' : h.kind === 'topup' ? 'plus' : 'undo';
+  return `<button class="hrow" ${h.order_id ? `data-act="open-order" data-id="${h.order_id}"` : ''}><span class="hic ${plus ? 'in' : ''}">${ic(icon)}</span>
+    <div class="mid"><div class="t">${esc(title)}</div><div class="s">${h.code} · ${when(h.created_at)}</div></div>
+    <div class="end"><b class="${plus ? 'pos' : ''}">${plus ? '+' : '−'}${money(Math.abs(h.amount))}</b><small>${money(h.balance_after)}</small></div></button>`;
+};
+const pendingCard = (o) => (o ? `<div class="card pendcard"><div><span>${t('topup_pending')}</span><b>${money(o.amount)}</b>${tag(o.status)}</div>
+  <button class="btn line sm" data-act="open-order" data-id="${o.id}">${t('topup_continue')}</button></div>` : '');
 
 /* ---------------------------------------------------------------- screens */
 const screens = {};
@@ -334,6 +359,8 @@ screens.home = () => {
     <div class="brand">${LOGO}<div><div class="brand-name">NEXDONATE</div><div class="brand-sub">${t('brand_sub')}</div></div></div>
     <div class="top-actions"><button class="icon-btn" data-act="tab" data-tab="support" aria-label="${t('tab_support')}">${ic('support')}</button></div>
   </header>
+
+  ${balanceBar()}
 
   <section class="hero">
     <div>
@@ -631,18 +658,71 @@ function queueValidate() {
   }, 550);
 }
 
-/* ----- step 3: payment ----- */
+/* ----- step 3: pay from the balance ----- */
+// Only a payment that is already waiting (a top-up) is paid on the "pay" screen; a purchase never creates an order from there.
 async function ensureOrder() {
   const co = S.co;
-  const key = co.pack ? `${S.game}|${co.pack.region || ''}|${co.pack.custom ? 'c' + co.pack.uc : co.pack.offer_id}|${co.pid}` : null;
-  if (co.order && co.order.status === 'awaiting_payment' && (!co.orderKey || co.orderKey === key)) return co.order;
-  if (co.order && co.order.status === 'awaiting_payment') await api(`/orders/${co.order.id}/cancel`, { method: 'POST' }).catch(() => {});
-  const what = isPubg() ? (co.pack.custom ? { custom_uc: co.pack.uc } : { offer_id: co.pack.offer_id }) : { offer_id: co.pack.offer_id, region: co.pack.region || '' };
-  co.order = await api('/orders', { method: 'POST', body: { game: S.game, ...what, player_id: co.pid, confirm_id: co.confirm, save_id: co.save && kindOf() !== 'code' } });
-  co.orderKey = key;
-  if (co.save) api('/bootstrap').then((b) => { S.savedIds = b.saved_ids; }).catch(() => {});
-  return co.order;
+  if (co.order && co.order.status === 'awaiting_payment') return co.order;
+  throw Object.assign(new Error('cannot_pay'), { code: 'cannot_pay' });
 }
+
+const orderBody = () => {
+  const co = S.co;
+  const what = isPubg() ? (co.pack.custom ? { custom_uc: co.pack.uc } : { offer_id: co.pack.offer_id }) : { offer_id: co.pack.offer_id, region: co.pack.region || '' };
+  return { game: S.game, ...what, player_id: co.pid, confirm_id: co.confirm, save_id: co.save && kindOf() !== 'code', client_key: co.key };
+};
+
+const confirmSummary = () => {
+  const co = S.co, kind = kindOf();
+  return `<div class="card sum-card">
+  <div class="sum-row"><span>${t('product')}</span><b>${esc(packTitle(co.pack))}</b></div>
+  ${co.pack.custom ? `<div class="sum-row"><span>${t('contents')}</span><b>${esc(breakdown(co.pack.items))}</b></div>` : ''}
+  ${co.nick ? `<div class="sum-row"><span>${t('account')}</span><b>${esc(co.nick)}</b></div>` : ''}
+  ${kind === 'code' ? '' : `<div class="sum-row"><span>${t(kind === 'username' ? 'tg_username' : 'player_id')}</span><b>${esc(shownId(co.pid, kind))}</b></div>`}</div>`;
+};
+
+function confirmBody() {
+  const c = S.confirm, co = S.co;
+  const price = c ? c.price : priceOf(co.pack);
+  let box, label, act, hidden = false;
+  if (!c) {
+    box = `<div class="skeleton" style="height:118px"></div>`;
+    label = t('bal_checking'); act = 'noop';
+  } else if (c.unavailable) {
+    box = `<div class="shortbox mt"><div class="shortbox-h">${ic('alert')}<b>${t('unavail_title')}</b></div><p>${t('unavail_text')}</p>
+      ${S.support ? `<button class="btn gold block mt" data-act="contact" data-text="${esc(t('contact_unavail', { title: packTitle(co.pack) }))}">${ic('send', 'sm')}${t('contact_support')}</button>` : ''}</div>`;
+    label = t('back'); act = 'back'; hidden = true;
+  } else {
+    box = `<div class="card sum-card mt">
+      <div class="sum-row"><span>${t('bal_price')}</span><b>${money(c.price)}</b></div>
+      <div class="sum-row"><span>${t('bal_you_have')}</span><b>${money(c.balance)}</b></div>
+      ${c.enough ? `<div class="sum-row total"><span>${t('bal_after')}</span><b>${money(c.balance - c.price)}</b></div>` : ''}</div>
+      ${c.enough
+        ? `<div class="notice mt">${ic('shield', 'sm')}<span>${t('pay_from_balance_note')}</span></div>`
+        : `<div class="shortbox mt"><div class="shortbox-h">${ic('wallet')}<b>${t('short_title')}</b></div><p>${t('short_text', { sum: `<b>${money(c.missing)}</b>` })}</p></div>`}`;
+    label = c.enough ? t('pay_from_balance') : t('short_go'); act = c.enough ? 'pay-balance' : 'topup-need';
+  }
+  return `${stepper(3)}${confirmSummary()}<div id="cbody">${box}</div>${cta(money(price), label, !c, act, hidden)}`;
+}
+screens.confirm = () => { const co = S.co; if (!co.key) co.key = newKey(); return `<div id="confbox">${confirmBody()}</div>`; };
+function renderConfirm() {
+  if (cur().name !== 'confirm') return;
+  $('#ctaslot').replaceChildren();
+  $('#view').innerHTML = screens.confirm();
+  hoistCta();
+}
+after.confirm = async () => {
+  S.confirm = null;
+  try {
+    const r = await api('/orders/check', { method: 'POST', body: orderBody() });
+    if (cur().name !== 'confirm') return;
+    S.confirm = r; S.user.balance = r.balance;
+    renderConfirm();
+  } catch (e) {
+    const box = $('#cbody'); if (!box || cur().name !== 'confirm') return;
+    box.innerHTML = `<div class="errbox"><h3>${errText(e)}</h3><button class="btn ghost" data-act="back">${t('back')}</button></div>`;
+  }
+};
 
 const summaryCard = (o) => {
   const kind = gameOf(o.game || 'pubg').kind;
@@ -659,9 +739,14 @@ const timerText = (o) => {
   return `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`;
 };
 
+const topupSummary = (o) => `<div class="card sum-card">
+  <div class="sum-row"><span>${t('product')}</span><b>${t('topup_title')}</b></div>
+  <div class="sum-row total"><span>${t('to_pay')}</span><b>${money(o.amount)}</b></div></div>`;
+
 function payBody() {
   const o = S.co.order;
   const p = o.payment || {};
+  const topup = o.game === 'topup';
   let pay;
   if (p.provider === 'bot') {
     pay = `<div class="card pay-card">
@@ -685,7 +770,7 @@ function payBody() {
   const lbl = p.provider === 'bot' ? t('go_bot') : p.provider === 'click' ? t('pay_click') : t('demo_pay');
   const dis = (p.provider === 'bot' || p.provider === 'click') && !p.available;
   const codeNote = kindOf() === 'code' ? `<div class="notice mt">${ic('lock', 'sm')}<span>${t('code_pay_note')}</span></div>` : '';
-  return `${stepper(3)}${summaryCard(o)}${pay}${codeNote}
+  return `${topup ? '' : stepper(3)}${topup ? topupSummary(o) : summaryCard(o)}${pay}${topup ? '' : codeNote}
     <button class="text-btn" data-act="cancel-order">${t('cancel_order')}</button>
     ${cta(money(o.amount), lbl, dis, 'pay')}`;
 }
@@ -702,11 +787,6 @@ after.pay = async () => {
   } catch (e) {
     const box = $('#paybox'); if (!box) return;
     const pending = e.code === 'too_many_pending';
-    if (e.code === 'unavailable' && S.botUrl) {  // the supplier wallet cannot cover it: the bot has just sent the customer the way to the admin, so go there like for a payment
-      box.innerHTML = `<div class="errbox"><h3>${t('to_bot')}</h3></div>`;
-      goBot(S.botUrl);
-      return;
-    }
     box.innerHTML = `<div class="errbox"><h3>${errText(e)}</h3><button class="btn ghost" data-act="${pending ? 'goto-orders' : 'back'}">${pending ? t('tab_orders') : t('back')}</button></div>`;
   }
 };
@@ -740,10 +820,10 @@ function startPayTimer() {
 }
 
 /* ----- order detail ----- */
-const STEP_OF = { awaiting_payment: 1, payment_review: 1, paid: 2, processing: 2, completed: 4, failed: 2, cancelled: 0, expired: 0 };
+const STEP_OF = { awaiting_payment: 1, payment_review: 1, paid: 2, processing: 2, completed: 4, failed: 2, cancelled: 0, expired: 0, refunded: 0 };
 const ORB = {
   awaiting_payment: ['warn', 'clock'], payment_review: ['warn', 'clock'], paid: ['gold', 'bolt'], processing: ['gold', 'bolt'],
-  completed: ['ok', 'check'], failed: ['err', 'alert'], cancelled: ['mute', 'x'], expired: ['mute', 'clock'],
+  completed: ['ok', 'check'], failed: ['err', 'alert'], cancelled: ['mute', 'x'], expired: ['mute', 'clock'], refunded: ['gold', 'undo'],
 };
 
 const codesCard = (o) => {
@@ -755,9 +835,30 @@ const codesCard = (o) => {
     ${url ? `<button class="btn gold block" data-act="open-url" data-url="${esc(url)}">${t('code_redeem')} ${ic('arrow', 'sm')}</button>` : ''}</div>`;
 };
 
+const topupOrder = (o) => {
+  const [tone, icon] = ORB[o.status] || ['mute', 'clock'];
+  const k = 'tp_hero_' + o.status;
+  return `
+  <div class="status-hero">
+    <div class="status-orb ${tone} ${o.status === 'payment_review' ? 'spin' : ''}">${ic(icon)}</div>
+    <h2>${t(k)}</h2><p>${t(k + '_sub')}</p>
+  </div>
+  <div class="card sum-card mt">
+    <div class="sum-row"><span>${t('order_no')}</span><b>${o.code}</b></div>
+    <div class="sum-row"><span>${t('date')}</span><b>${when(o.created_at)}</b></div>
+    <div class="sum-row total"><span>${t('amount')}</span><b>${o.status === 'completed' ? '+' : ''}${money(o.amount)}</b></div></div>
+  <div class="mt" style="display:grid;gap:10px">
+    ${o.status === 'awaiting_payment' ? `<button class="btn gold block" data-act="resume-pay">${t('continue_pay')} ${ic('arrow', 'sm')}</button>` : ''}
+    ${o.status === 'completed' ? `<button class="btn gold block" data-act="open-balance">${t('tp_go_balance')} ${ic('arrow', 'sm')}</button>` : ''}
+    ${['cancelled', 'expired'].includes(o.status) ? `<button class="btn gold block" data-act="open-balance">${t('tp_again')}</button>` : ''}
+    ${['payment_review', 'expired'].includes(o.status) && S.support ? `<button class="btn line block" data-act="contact" data-text="${esc(t('contact_order', { code: o.code, title: t('topup_title') }))}">${ic('send', 'sm')}${t('contact_support')}</button>` : ''}
+  </div>`;
+};
+
 screens.order = () => {
   const o = S.viewOrder;
   if (!o) return `<div class="skeleton" style="height:240px"></div>`;
+  if (o.game === 'topup') return topupOrder(o);
   const [tone, icon] = ORB[o.status] || ['mute', 'clock'];
   const spin = ['paid', 'processing', 'payment_review'].includes(o.status);
   const idx = STEP_OF[o.status] ?? 0;
@@ -765,12 +866,13 @@ screens.order = () => {
     ['tl_created', null], ['tl_payment', o.status === 'payment_review' ? 'tl_review' : null],
     ['tl_delivery', o.status === 'failed' ? 'tl_failed_sub' : null], ['tl_done', null],
   ];
-  const tl = o.status === 'cancelled' || o.status === 'expired' ? '' : `<div class="card timeline">${steps.map(([k, sub], i) => {
+  const tl = ['cancelled', 'expired', 'refunded'].includes(o.status) ? '' : `<div class="card timeline">${steps.map(([k, sub], i) => {
     let cls = i < idx ? 'done' : i === idx ? 'now' : '';
     if (o.status === 'failed' && i === 2) cls = 'err';
     if (o.status === 'completed') cls = 'done';
     return `<div class="tl ${cls}"><span class="pt">${cls === 'done' ? ic('check') : ''}</span><div><div class="tx">${t(k)}</div>${sub ? `<div class="sub">${t(sub)}</div>` : ''}</div></div>`;
   }).join('')}</div>`;
+  const contact = (cls) => (S.support ? `<button class="btn ${cls} block" data-act="contact" data-text="${esc(t('contact_order', { code: o.code, title: orderTitle(o) }))}">${ic('send', 'sm')}${t('contact_support')}</button>` : '');
   return `
   <div class="status-hero">
     <div class="status-orb ${tone} ${spin ? 'spin' : ''}">${ic(icon)}</div>
@@ -780,6 +882,8 @@ screens.order = () => {
     <div class="oprod-art">${o.game && o.game !== 'pubg' ? genArt(o.game, o.uc, { gsec: o.section, label: o.section ? o.offer_name : '' }) : packArt({ section: o.uc ? 'uc' : sectionOf(o.offer_id || ''), uc: o.uc, offer_id: o.offer_id, items: o.items })}</div>
     <div class="oprod-tx"><b>${esc(orderTitle(o))}</b><span>→ ${esc(whoOf(o))}</span></div>
   </div>
+  ${o.status === 'failed' ? `<div class="shortbox"><div class="shortbox-h">${ic('shield')}<b>${t('failed_box_title')}</b></div><p>${t('failed_box_text')}</p></div>` : ''}
+  ${['paid', 'processing'].includes(o.status) ? `<div class="notice">${ic('clock', 'sm')}<span>${t('slow_hint')}</span></div>` : ''}
   ${codesCard(o)}
   ${tl}
   <div class="card sum-card mt">
@@ -792,8 +896,8 @@ screens.order = () => {
     <div class="sum-row total"><span>${t('amount')}</span><b>${money(o.amount)}</b></div></div>
   <div class="mt" style="display:grid;gap:10px">
     ${o.status === 'awaiting_payment' ? `<button class="btn gold block" data-act="resume-pay">${t('continue_pay')} ${ic('arrow', 'sm')}</button>` : ''}
-    ${['completed', 'cancelled', 'expired'].includes(o.status) ? `<button class="btn gold block" data-act="open-game" data-game="${esc(o.game || 'pubg')}">${t('buy_again')}</button>` : ''}
-    ${['failed', 'payment_review', 'processing', 'paid'].includes(o.status) && S.support ? `<button class="btn line block" data-act="contact">${ic('send', 'sm')}${t('contact_support')}</button>` : ''}
+    ${['completed', 'cancelled', 'expired', 'refunded'].includes(o.status) ? `<button class="btn gold block" data-act="open-game" data-game="${esc(o.game || 'pubg')}">${t('buy_again')}</button>` : ''}
+    ${o.status === 'failed' ? contact('gold') : ['payment_review', 'processing', 'paid'].includes(o.status) ? contact('line') : ''}
   </div>`;
 };
 after.order = () => {
@@ -812,6 +916,55 @@ after.order = () => {
   S.timer = setInterval(load, 3000);
 };
 
+/* ----- balance: the amount, the top-up, what happened to the money ----- */
+const digits = (v) => String(v == null ? '' : v).replace(/\D/g, '').slice(0, 9);
+const topupLimits = () => ({ min: (S.bal && S.bal.min) || 1000, max: (S.bal && S.bal.max) || 10000000 });
+const topupValid = () => { const n = Number(digits(S.topup.amount)); const { min, max } = topupLimits(); return n >= min && n <= max; };
+
+screens.balance = (params = {}) => {
+  if (params.need && S.topup.fromNeed !== params.need) { S.topup = { amount: String(Math.max(Math.ceil(params.need), topupLimits().min)), fromNeed: params.need }; }
+  const { min, max } = topupLimits();
+  const val = digits(S.topup.amount);
+  return `<h1 class="page-title">${t('balance')}</h1>
+  <div class="balhero"><span>${t('balance_title')}</span><b id="bal-amount">${money(S.user.balance || 0)}</b><small>${t('balance_hint')}</small></div>
+  ${params.need ? `<div class="notice mt">${ic('alert', 'sm')}<span>${t('topup_need', { sum: `<b>${money(params.need)}</b>` })}</span></div>` : ''}
+  <div id="pendbox"></div>
+  <h2 class="sec"><span>${t('topup')}</span></h2>
+  <div class="card topup">
+    <label class="field-label" for="tamount">${t('topup_amount')}</label>
+    <div class="field" id="tfield"><span class="lead">${ic('wallet')}</span>
+      <input id="tamount" inputmode="numeric" autocomplete="off" placeholder="${t('topup_placeholder')}" value="${val ? fmt(val) : ''}">
+      <span class="trail som-trail">${t('som')}</span></div>
+    <div class="chips amt-chips">${[5000, 10000, 25000, 50000, 100000].map((v) => `<button class="chip" data-act="topup-chip" data-v="${v}">${fmt(v)}</button>`).join('')}</div>
+    <div class="chint" id="tlimits">${t('topup_limits', { min: money(min), max: money(max) })}</div>
+    <button class="btn gold block mt" id="topup-btn" data-act="topup-go" ${topupValid() ? '' : 'disabled'}>${ic('plus', 'sm')}${t('topup_go')}</button>
+  </div>
+  <details class="help"><summary>${ic('help', 'sm')}${t('topup_how')}</summary>
+    <ol class="steps-list" style="padding:0 16px 8px"><li>${t('topup_s1')}</li><li>${t('topup_s2')}</li><li>${t('topup_s3')}</li></ol></details>
+  <h2 class="sec"><span>${t('bal_history')}</span></h2>
+  <div id="balhist"><div class="skeleton" style="height:78px"></div></div>`;
+};
+after.balance = async () => {
+  const inp = $('#tamount');
+  if (inp) inp.addEventListener('input', () => {
+    S.topup.amount = digits(inp.value); inp.value = S.topup.amount ? fmt(S.topup.amount) : '';
+    const b = $('#topup-btn'); if (b) b.disabled = !topupValid();
+  });
+  try {
+    const b = await api('/balance');
+    S.bal = b; S.user.balance = b.balance;
+    if (cur().name !== 'balance') return;
+    const am = $('#bal-amount'); if (am) am.textContent = money(b.balance);
+    const pb = $('#pendbox'); if (pb) pb.innerHTML = pendingCard(b.pending);
+    const lim = $('#tlimits'); if (lim) lim.textContent = t('topup_limits', { min: money(b.min), max: money(b.max) });
+    const btn = $('#topup-btn'); if (btn) btn.disabled = !topupValid();
+    const hist = $('#balhist');
+    if (hist) hist.innerHTML = b.history.length ? b.history.map(histRow).join('') : `<div class="lb-empty">${t('bal_empty')}</div>`;
+  } catch (_) {
+    const hist = $('#balhist'); if (hist) hist.innerHTML = `<div class="errbox"><h3>${t('err_generic')}</h3></div>`;
+  }
+};
+
 /* ----- orders list ----- */
 screens.orders = () => `<h1 class="page-title">${t('tab_orders')}</h1><div id="olist">${Array.from({ length: 3 }, () => '<div class="skeleton" style="height:78px;margin-bottom:10px"></div>').join('')}</div>`;
 after.orders = async () => {
@@ -823,7 +976,7 @@ after.orders = async () => {
 
 /* ----- support ----- */
 screens.support = () => {
-  const faq = [1, 2, 3, 4, 5, 6].map((i) => `<details class="faq"><summary><span>${t('faq_q' + i)}</span>${ic('chevron')}</summary><p>${t('faq_a' + i)}</p></details>`).join('');
+  const faq = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `<details class="faq"><summary><span>${t('faq_q' + i)}</span>${ic('chevron')}</summary><p>${t('faq_a' + i)}</p></details>`).join('');
   return `<h1 class="page-title">${t('tab_support')}</h1>
   <div class="card-hl" style="padding:22px 20px;text-align:center">
     <div class="status-orb gold" style="width:70px;height:70px;margin-bottom:14px">${ic('support')}</div>
@@ -854,6 +1007,8 @@ screens.profile = () => {
   const saved = S.savedIds;
   return `<h1 class="page-title">${t('tab_profile')}</h1>
   <div class="card-hl profile-head">${avatar}<div><div class="n">${esc(name)}</div><div class="u">${u.username ? '@' + esc(u.username) + ' · ' : ''}ID ${u.id}</div></div></div>
+  <div class="card-hl balcard"><div><span>${t('balance_title')}</span><b>${money(u.balance || 0)}</b></div>
+    <button class="btn gold sm" data-act="open-balance">${ic('plus', 'sm')}${t('topup_short')}</button></div>
   <div class="stats"><div class="stat"><span>${t('stat_orders')}</span><b>${fmt(S.stats.orders)}</b></div>
     <div class="stat"><span>${t('stat_spent')}</span><b>${money(S.stats.spent.UZS || 0)}</b></div></div>
   <h2 class="sec">${t('saved_ids')}</h2>
@@ -880,7 +1035,7 @@ function render() {
   const c = cur();
   const isTab = S.stack.length === 1 && TABS.includes(c.name);
   const view = $('#view');
-  view.className = 'view' + (['game', 'id', 'pay'].includes(c.name) ? ' has-cta' : '');
+  view.className = 'view' + (['game', 'id', 'pay', 'confirm'].includes(c.name) ? ' has-cta' : '');
   $('#ctaslot').replaceChildren(); // the previous screen's bar goes away with the screen
   view.innerHTML = screens[c.name](c.params || {});
   hoistCta();
@@ -962,8 +1117,43 @@ const actions = {
     } catch (e) { toast(errText(e)); el.disabled = false; }
   },
   next: () => {
-    if (cur().name === 'game' && S.co.pack) { if (kindOf() === 'code') { S.co.pid = ''; S.co.confirm = ''; go('pay'); } else go('id'); }
-    else if (cur().name === 'id' && idOk()) go('pay');
+    if (cur().name === 'game' && S.co.pack) { if (kindOf() === 'code') { S.co.pid = ''; S.co.confirm = ''; S.co.key = newKey(); go('confirm'); } else go('id'); }
+    else if (cur().name === 'id' && idOk()) { S.co.key = newKey(); go('confirm'); }
+  },
+  noop: () => {},
+  'open-balance': () => go('balance'),
+  'topup-need': () => go('balance', { need: S.confirm ? S.confirm.missing : 0 }),
+  'topup-chip': (el) => {
+    S.topup.amount = String(el.dataset.v); const i = $('#tamount'); if (i) i.value = fmt(S.topup.amount);
+    const b = $('#topup-btn'); if (b) b.disabled = !topupValid(); haptic('light');
+  },
+  'topup-go': async (el) => {
+    if (!topupValid()) { toast(t('err_bad_topup')); return; }
+    el.disabled = true;
+    try {
+      const o = await api('/topups', { method: 'POST', body: { amount: Number(digits(S.topup.amount)) } });
+      S.topup = { amount: '' }; S.co = { ...freshCo(), order: o };
+      notice('success'); go('pay');   // the pay screen opens the bot chat: card, exact amount, receipt
+    } catch (e) { toast(errText(e)); notice('error'); el.disabled = false; }
+  },
+  'pay-balance': async (el) => {
+    const co = S.co; if (!co.pack || co.busy) return;
+    co.busy = true; el.disabled = true;
+    try {
+      const o = await api('/orders', { method: 'POST', body: orderBody() });
+      S.user.balance = o.balance; notice('success');
+      S.viewOrder = o; S.co = freshCo();
+      setStack([{ name: 'home' }, { name: 'order', params: { id: o.id } }]);   // delivered right here: the order screen shows it live
+      refreshBoot();
+    } catch (e) {
+      if (e.code === 'insufficient_balance' && e.data) {
+        S.confirm = { price: e.data.need, balance: e.data.balance, enough: false, missing: e.data.missing }; S.user.balance = e.data.balance;
+        notice('warning'); renderConfirm();
+      } else if (e.code === 'unavailable') {
+        S.confirm = { ...(S.confirm || {}), price: priceOf(co.pack), unavailable: true }; notice('warning'); renderConfirm();
+      } else { toast(errText(e)); notice('error'); el.disabled = false; }
+    }
+    co.busy = false;
   },
   'use-id': (el) => { S.co.pid = el.dataset.pid; S.co.confirm = S.co.pid; const i = $('#pid'); i.value = S.co.pid; const c = $('#cpid'); if (c) c.value = S.co.confirm; queueValidate(); haptic('light'); },
   revalidate: () => queueValidate(),
@@ -1012,8 +1202,9 @@ const actions = {
     lang = el.dataset.lang; api('/lang', { method: 'POST', body: { lang } }).catch(() => {});
     document.documentElement.lang = lang; render();
   },
-  contact: () => {
-    const url = `https://t.me/${S.support}`;
+  contact: (el) => {
+    const text = el && el.dataset && el.dataset.text;   // what the message to the admin says already: which order, which product
+    const url = `https://t.me/${S.support}${text ? '?text=' + encodeURIComponent(text) : ''}`;
     if (tg && tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank');
   },
 };
@@ -1030,7 +1221,7 @@ document.addEventListener('click', (e) => {
 async function refreshBoot() {
   try {
     const b = await api('/bootstrap');
-    S.stats = b.stats; S.lb = b.leaderboard; S.savedIds = b.saved_ids; S.games = b.games;
+    S.user = b.user; S.stats = b.stats; S.lb = b.leaderboard; S.savedIds = b.saved_ids; S.games = b.games;
   } catch (_) {}
 }
 

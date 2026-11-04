@@ -1,5 +1,6 @@
 import asyncio
 import hmac
+import html
 import json
 import re
 import time
@@ -7,10 +8,11 @@ import uuid
 from collections import defaultdict, deque
 from decimal import Decimal
 
+from fastapi.responses import JSONResponse
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
-from . import click, db, fulfillment, notify, payments
+from . import click, db, fulfillment, notify, payments, wallet
 from .auth import current_user
 from .config import (
     CARD_NUMBER,
@@ -21,6 +23,8 @@ from .config import (
     PAYMENT_TTL_MIN,
     PUBG_VALIDATE_CATEGORY,
     PAYMENT_PROVIDER,
+    TOPUP_MAX,
+    TOPUP_MIN,
 )
 from .games import REGISTRY
 from .pricing import game_packs, peek_game_packs, pubg_packs, quote_uc, uc_options, uzs_price
@@ -198,7 +202,7 @@ async def _own_order(order_id: str, user: dict) -> dict:
 
 async def _stats(tg_id: int) -> dict:
     row = await db.fetchone(
-        "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS spent FROM orders WHERE tg_id = ? AND status = 'completed' AND currency = 'UZS'",
+        "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS spent FROM orders WHERE tg_id = ? AND status = 'completed' AND currency = 'UZS' AND game != 'topup'",
         (tg_id,),
     )
     return {"orders": row["n"], "spent": {"UZS": row["spent"]}}
@@ -225,7 +229,7 @@ async def _leaderboard(tg_id: int) -> dict:
                 """SELECT o.tg_id, SUM(CAST(o.cost_usd AS REAL)) AS usd, COUNT(*) AS n,
                           u.first_name, u.last_name, u.photo_url
                    FROM orders o LEFT JOIN users u ON u.tg_id = o.tg_id
-                   WHERE o.status = 'completed' AND o.created_at >= ?
+                   WHERE o.status = 'completed' AND o.game != 'topup' AND o.created_at >= ?
                    GROUP BY o.tg_id HAVING usd > 0 ORDER BY usd DESC, n DESC, o.tg_id LIMIT 10""",
                 (now - days * 86400,),
             )
@@ -268,6 +272,7 @@ async def bootstrap(user: dict = Depends(current_user)):
             "photo_url": user["photo_url"],
             "lang": user["lang"],
             "setup_done": bool(user["setup_done"]),
+            "balance": int(user.get("balance") or 0),
         },
         "stats": await _stats(user["tg_id"]),
         "games": _games_view(from_price),
@@ -396,25 +401,15 @@ class OrderIn(BaseModel):
     game: str
     offer_id: str | None = None
     custom_uc: int | None = None
-    player_id: str
+    player_id: str = ""
     confirm_id: str | None = None  # the ID typed a second time; required when the supplier cannot look IDs up
     region: str = ""  # the account's game server, for games that have one (Free Fire)
     save_id: bool = False
+    client_key: str | None = None  # one per press of "pay": a retry or a double tap returns the same order instead of charging twice
 
 
-@router.post("/orders")
-async def create_order(body: OrderIn, user: dict = Depends(current_user)):
-    g = None if body.game == "pubg" else _game(body.game)  # None = PUBG UC, which has its own pack logic
-    _rate_limit(user["tg_id"], limit=10)
-    await _expire_stale()
-
-    pending = await db.fetchone(
-        "SELECT COUNT(*) AS n FROM orders WHERE tg_id = ? AND status IN ('awaiting_payment', 'payment_review')",
-        (user["tg_id"],),
-    )
-    if pending["n"] >= 3:
-        raise HTTPException(429, "too_many_pending")
-
+async def _resolve_purchase(body: OrderIn, g) -> dict:
+    """What is being bought, rebuilt server-side from the catalog (the client only names it): contents, title, price, supplier cost."""
     section = ""
     if g is not None:
         region = body.region if g.has_regions else ""
@@ -436,7 +431,6 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
             items = await pubg_packs(fulfillment.supplier)
         except Exception:
             raise HTTPException(503, "catalog_unavailable")
-        # Price, contents and totals are always rebuilt server-side; the client only names what it wants.
         if body.custom_uc:
             q = quote_uc(items, body.custom_uc)
             if not q["ok"]:
@@ -451,61 +445,183 @@ async def create_order(body: OrderIn, user: dict = Depends(current_user)):
             order_items = [{"offer_id": pack["offer_id"], "name": pack["name"], "uc": pack["uc"], "qty": 1}]
             title, uc_total, price, cost_usd = pack["name"], pack["uc"], uzs_price(pack["cost_usd"]), pack["cost_usd"]
             first_offer = pack["offer_id"]
+    return {"section": section, "order_items": order_items, "title": title, "uc_total": uc_total, "price": price, "cost_usd": cost_usd, "first_offer": first_offer}
 
-    if not await _wallet_covers(cost_usd):
-        if g is not None:  # the bot sends the customer a button to the admin with this request typed; the app jumps into the bot chat
-            mine = g.normalize(body.player_id)
-            who = "" if not mine else ("@" + mine if g.recipient == "username" else mine)
+
+_seen_events: dict[tuple, float] = {}  # (customer, what) -> when the owner was last told, so one customer pressing around does not flood him
+
+
+async def _tell_owner_once(key: tuple, seconds: int, kind: str, text: str, tg_id: int) -> None:
+    now = time.time()
+    if len(_seen_events) > 5000:
+        _seen_events.clear()
+    if now - _seen_events.get(key, 0) < seconds:
+        return
+    _seen_events[key] = now
+    await notify.admin_event(kind, text, tg_id=tg_id)
+
+
+def _what(g, r: dict) -> str:
+    return f"{g.name if g is not None else 'PUBG Mobile'}: <b>{html.escape(r['title'])}</b>"
+
+
+async def _balance_short_event(user: dict, g, r: dict, balance: int) -> None:
+    """Somebody wanted to buy but the balance is not enough: the owner hears who, what, how much is missing."""
+    await _tell_owner_once(
+        (user["tg_id"], "short", g.id if g else "pubg", r["first_offer"], r["uc_total"]), 600, "balance_short",
+        f"💸 <b>Balans yetmadi</b>\n{_what(g, r)}\nNarxi: {_money(r['price'], 'UZS')} · balansi: {_money(balance, 'UZS')} · "
+        f"yetmaydi: <b>{_money(r['price'] - balance, 'UZS')}</b>\nMijozga balansni to'ldirish taklif qilindi.",
+        user["tg_id"],
+    )
+
+
+async def _supplier_short_event(user: dict, g, r: dict) -> None:
+    await _tell_owner_once(
+        (user["tg_id"], "supplier", g.id if g else "pubg", r["first_offer"]), 120, "wallet_refused",
+        f"🚫 <b>Xarid bajarilmadi: yetkazib beruvchi hamyoni yetarli emas</b>\n{_what(g, r)} · {_money(r['price'], 'UZS')}\n"
+        "Mijozning balansidan hech narsa yechilmadi. Unga «admin bilan bog'laning» deb aytildi.",
+        user["tg_id"],
+    )
+
+
+def _insufficient(e: "wallet.Insufficient") -> JSONResponse:
+    return JSONResponse(status_code=402, content={"detail": "insufficient_balance", "balance": e.balance, "need": e.need, "missing": e.missing})
+
+
+@router.post("/orders/check")
+async def check_order(body: OrderIn, user: dict = Depends(current_user)):
+    """The price of what the customer is about to buy against their balance. If the balance is short, the owner is told."""
+    g = None if body.game == "pubg" else _game(body.game)
+    _rate_limit(user["tg_id"], limit=30)
+    r = await _resolve_purchase(body, g)
+    balance = await wallet.balance_of(user["tg_id"])
+    if balance < r["price"]:
+        await _balance_short_event(user, g, r, balance)
+    return {"price": r["price"], "balance": balance, "enough": balance >= r["price"], "missing": max(0, r["price"] - balance)}
+
+
+@router.post("/orders")
+async def create_order(body: OrderIn, user: dict = Depends(current_user)):
+    """Buy from the balance: the price is taken at once and the delivery starts. No money in the balance, no order."""
+    g = None if body.game == "pubg" else _game(body.game)  # None = PUBG UC, which has its own pack logic
+    _rate_limit(user["tg_id"], limit=10)
+    await _expire_stale()
+    r = await _resolve_purchase(body, g)
+    price, cost_usd = r["price"], r["cost_usd"]
+    try:
+        if g is not None:
+            pid = g.normalize(body.player_id)
+            if pid is None:
+                raise HTTPException(422, "invalid_id")
+            nick = None
+            if not g.same(body.confirm_id or "", pid):
+                raise HTTPException(422, "id_mismatch")
+            if g.delivery == "code":
+                body.save_id = False  # nothing to remember: the code goes to whoever pays
         else:
-            who = body.player_id.strip() if re.fullmatch(r"\d{5,14}", body.player_id.strip()) else ""
-        await notify.wallet_short(user["tg_id"], title, g.name if g is not None else "PUBG Mobile", who)
-        raise HTTPException(503, "unavailable")
+            pid = body.player_id.strip()
+            ok, nick, verified = await _validate(pid)  # the price and the ID are always checked server-side
+            if not ok:
+                raise HTTPException(422, "invalid_id")
+            if not verified and (body.confirm_id or "").strip() != pid:
+                raise HTTPException(422, "id_mismatch")
 
-    if g is not None:
-        pid = g.normalize(body.player_id)
-        if pid is None:
-            raise HTTPException(422, "invalid_id")
-        nick, verified = None, False
-        if not g.same(body.confirm_id or "", pid):
-            raise HTTPException(422, "id_mismatch")
-        if g.delivery == "code":
-            body.save_id = False  # nothing to remember: the code goes to whoever pays
-    else:
-        pid = body.player_id.strip()
-        ok, nick, verified = await _validate(pid)  # the price and the ID are always checked server-side
-        if not ok:
-            raise HTTPException(422, "invalid_id")
-        if not verified and (body.confirm_id or "").strip() != pid:
-            raise HTTPException(422, "id_mismatch")
+        have = await wallet.balance_of(user["tg_id"])
+        if have < price:  # the cheap check first; the real one is made inside the transaction below
+            raise wallet.Insufficient(have, price)
 
+        if not await _wallet_covers(cost_usd):  # the supplier could not pay for it: nothing is taken from the customer
+            await _supplier_short_event(user, g, r)
+            raise HTTPException(503, "unavailable")
+
+        now = db.now()
+        fields = {
+            "id": uuid.uuid4().hex, "tg_id": user["tg_id"], "game": body.game, "offer_id": r["first_offer"], "offer_name": r["title"],
+            "uc": r["uc_total"], "player_id": pid, "nick": nick, "amount": price, "currency": "UZS", "cost_usd": cost_usd,
+            "status": "paid", "payment_provider": "balance", "created_at": now, "updated_at": now, "expires_at": now,
+            "items": json.dumps(r["order_items"]), "section": r["section"], "client_key": (body.client_key or "")[:64] or None,
+        }
+        order_id, balance, created = await wallet.pay_order(fields)
+    except wallet.Insufficient as e:
+        await _balance_short_event(user, g, r, e.balance)
+        return _insufficient(e)
+
+    if created:
+        if body.save_id:
+            await db.execute(
+                "INSERT INTO saved_ids (tg_id, game, player_id, nick) VALUES (?,?,?,?) "
+                "ON CONFLICT (tg_id, game, player_id) DO UPDATE SET nick = excluded.nick",
+                (user["tg_id"], body.game, pid, nick),
+            )
+        order = await db.get_order(order_id)
+        await notify.admin_event(
+            "order_created",
+            f"🛒 <b>Yangi buyurtma</b> · {db.code(order_id)}\n{r['title']} · {_money(price, 'UZS')}\n"
+            + (
+                "Kod buyurtmasi (kod yetkazilgach ilovada chiqadi)"
+                if g is not None and g.delivery == "code"
+                else f"{'Username' if g is not None and g.recipient == 'username' else 'ID'}: <code>{'@' if g is not None and g.recipient == 'username' else ''}{pid}</code> · {nick or '—'}"
+            )
+            + f"\nBalansdan to'landi · qolgan balans: {_money(balance, 'UZS')}",
+            order,
+        )
+        fulfillment.start(order_id)
+    return {**_public(await db.get_order(order_id)), "balance": balance}
+
+
+# ---------------------------------------------------------------- balance
+class TopupIn(BaseModel):
+    amount: int
+
+
+@router.get("/balance")
+async def get_balance(user: dict = Depends(current_user)):
+    """The customer's balance, what happened to it lately, and a top-up that is still waiting for money or for the owner's check."""
+    await _expire_stale()
+    waiting = await db.fetchone(
+        "SELECT * FROM orders WHERE tg_id = ? AND game = 'topup' AND status IN ('awaiting_payment', 'payment_review') ORDER BY created_at DESC LIMIT 1",
+        (user["tg_id"],),
+    )
+    return {
+        "balance": await wallet.balance_of(user["tg_id"]),
+        "history": await wallet.history(user["tg_id"]),
+        "pending": _public(waiting) if waiting else None,
+        "min": TOPUP_MIN, "max": TOPUP_MAX,
+    }
+
+
+@router.post("/topups")
+async def create_topup(body: TopupIn, user: dict = Depends(current_user)):
+    """Ask to top up the balance: an order of the game "topup" that is paid by card and checked by the owner, like any payment."""
+    if not (TOPUP_MIN <= body.amount <= TOPUP_MAX):
+        raise HTTPException(422, "bad_topup")
+    _rate_limit(user["tg_id"], limit=10)
+    await _expire_stale()
+    same = await db.fetchone(
+        "SELECT * FROM orders WHERE tg_id = ? AND game = 'topup' AND status = 'awaiting_payment' AND amount = ? ORDER BY created_at DESC LIMIT 1",
+        (user["tg_id"], body.amount),
+    )
+    if same:  # pressed twice: the same request, not a second one
+        return _public(same)
+    pending = await db.fetchone(
+        "SELECT COUNT(*) AS n FROM orders WHERE tg_id = ? AND game = 'topup' AND status IN ('awaiting_payment', 'payment_review')", (user["tg_id"],)
+    )
+    if pending["n"] >= 3:
+        raise HTTPException(429, "too_many_pending")
     order_id = uuid.uuid4().hex
     now = db.now()
     await db.execute(
         """INSERT INTO orders (id, tg_id, game, offer_id, offer_name, uc, player_id, nick, amount, currency, cost_usd,
-                               status, payment_provider, created_at, updated_at, expires_at, items, section)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            order_id, user["tg_id"], body.game, first_offer, title, uc_total, pid, nick,
-            price, "UZS", cost_usd, "awaiting_payment", PAYMENT_PROVIDER, now, now,
-            now + PAYMENT_TTL_MIN * 60, json.dumps(order_items), section,
-        ),
+                               status, payment_provider, created_at, updated_at, expires_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (order_id, user["tg_id"], "topup", "topup", "Balansni to'ldirish", None, "", None, body.amount, "UZS", None,
+         "awaiting_payment", PAYMENT_PROVIDER, now, now, now + PAYMENT_TTL_MIN * 60),
     )
-    if body.save_id:
-        await db.execute(
-            "INSERT INTO saved_ids (tg_id, game, player_id, nick) VALUES (?,?,?,?) "
-            "ON CONFLICT (tg_id, game, player_id) DO UPDATE SET nick = excluded.nick",
-            (user["tg_id"], body.game, pid, nick),
-        )
     order = await db.get_order(order_id)
     await notify.admin_event(
-        "order_created",
-        f"🛒 <b>Yangi buyurtma</b> · {db.code(order_id)}\n{title} · {_money(price, "UZS")}\n"
-        + (
-            "Kod buyurtmasi (kod to'lovdan keyin yuboriladi)"
-            if g is not None and g.delivery == "code"
-            else f"{'Username' if g is not None and g.recipient == 'username' else 'ID'}: <code>{'@' if g is not None and g.recipient == 'username' else ''}{pid}</code> · {nick or '—'}"
-        )
-        + "\nTo'lov: botda kutilmoqda",
+        "topup_created",
+        f"➕ <b>Balansni to'ldirish so'rovi</b> · {db.code(order_id)}\nSumma: <b>{_money(body.amount, 'UZS')}</b>\n"
+        "Mijoz botga yo'naltirildi: karta ko'rsatiladi, chek kutilmoqda.",
         order,
     )
     return _public(order)
@@ -543,8 +659,7 @@ async def mock_pay(order_id: str, user: dict = Depends(current_user)):
         raise HTTPException(404, "not_found")
     if order["status"] != "awaiting_payment":
         raise HTTPException(409, "cannot_pay")
-    await db.update_order(order_id, status="paid")
-    fulfillment.start(order_id)
+    await payments.confirm_order(order_id, "demo")
     return _public(await db.get_order(order_id))
 
 

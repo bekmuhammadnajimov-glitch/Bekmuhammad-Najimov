@@ -45,6 +45,8 @@ USD_UZS_RATE = float(os.getenv("USD_UZS_RATE", "12800"))
 MARKUP_PERCENT = float(os.getenv("MARKUP_PERCENT", "12"))
 ROUND_TO = int(os.getenv("ROUND_TO", "1000"))  # so'm
 CURRENCIES = ("UZS",)  # so'm is the only currency
+TOPUP_MIN = int(os.getenv("TOPUP_MIN", "1000"))  # so'm: the smallest and the largest balance top-up
+TOPUP_MAX = int(os.getenv("TOPUP_MAX", "10000000"))
 
 PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "mock").strip().lower()  # mock | manual_card | click (so'm payments)
 

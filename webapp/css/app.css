@@ -561,3 +561,50 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 .botlogo .ic { width: 24px; height: 24px; }
 .botbox b { display: block; font-size: 22px; font-weight: 800; color: #fff; }
 .botbox span { display: block; margin-top: 4px; font-size: 12px; font-weight: 600; color: rgba(255, 255, 255, .9); }
+
+/* ---------- balance ---------- */
+.balbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; margin: 0 0 14px; border-radius: 20px; background: var(--card); border: 1px solid var(--line-strong); box-shadow: var(--shadow); }
+.balbar-in { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.balbar-ic { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-2); flex: none; }
+.balbar-tx { min-width: 0; }
+.balbar-tx span { display: block; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.balbar-tx b { display: block; font-size: 18px; font-weight: 800; margin-top: 2px; color: var(--accent-deep); white-space: nowrap; }
+.balhero { position: relative; overflow: hidden; text-align: center; padding: 24px 18px 22px; border-radius: 26px; background: var(--hero-grad); color: #fff; box-shadow: 0 18px 32px -16px rgba(20, 83, 45, .65); }
+.balhero::before { content: ""; position: absolute; right: -60px; top: -80px; width: 220px; height: 220px; border-radius: 50%; background: rgba(255, 255, 255, .09); }
+.balhero > * { position: relative; }
+.balhero span { display: block; font-size: 12.5px; font-weight: 600; color: rgba(255, 255, 255, .9); }
+.balhero b { display: block; font-size: 34px; font-weight: 800; letter-spacing: -.02em; margin: 8px 0 6px; }
+.balhero small { display: block; font-size: 12px; font-weight: 500; color: rgba(255, 255, 255, .88); }
+.balcard { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; margin-top: 12px; }
+.balcard span { display: block; font-size: 12px; font-weight: 600; color: var(--muted); }
+.balcard b { display: block; font-size: 22px; font-weight: 800; margin-top: 6px; color: var(--accent-deep); }
+.topup { padding: 18px; }
+.som-trail { font-size: 13px; font-weight: 700; color: var(--muted); align-self: center; }
+.amt-chips { margin-top: 12px; }
+.amt-chips .chip { padding: 9px 13px; font-size: 12.5px; }
+.pendcard { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 14px 16px; }
+.pendcard span { display: block; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.pendcard b { display: inline-block; font-size: 17px; font-weight: 800; margin: 4px 8px 0 0; }
+.hrow { display: flex; align-items: center; gap: 12px; padding: 12px 13px; width: 100%; text-align: left; border-radius: 18px; background: var(--card); border: 1px solid var(--line); margin-bottom: 8px; }
+.hic { width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; flex: none; background: rgba(74, 90, 81, .08); color: var(--muted); }
+.hic.in { background: var(--accent-soft); color: var(--accent-2); }
+.hic .ic { width: 20px; height: 20px; }
+.hrow .mid { flex: 1; min-width: 0; }
+.hrow .t { font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hrow .s { font-size: 11px; color: var(--muted); margin-top: 3px; font-weight: 500; }
+.hrow .end { text-align: right; }
+.hrow .end b { display: block; font-size: 14px; font-weight: 800; white-space: nowrap; }
+.hrow .end b.pos { color: var(--accent-2); }
+.hrow .end small { display: block; font-size: 10.5px; color: var(--muted); margin-top: 3px; font-weight: 500; white-space: nowrap; }
+.orow .gicon.wic { display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-2); }
+.orow .gicon.wic .ic { width: 24px; height: 24px; }
+.shortbox { padding: 16px; border-radius: 18px; background: var(--bg-2); border: 1.5px solid var(--line-strong); }
+.shortbox-h { display: flex; align-items: center; gap: 10px; font-size: 15px; color: var(--accent-deep); }
+.shortbox-h .ic { color: var(--accent); }
+.shortbox p { margin-top: 8px; font-size: 13px; line-height: 1.6; color: var(--muted); font-weight: 500; }
+.shortbox p b { color: var(--accent-2); }
+#cbody { margin-top: 0; }
+.notice + .card, .shortbox + .card, .card + .shortbox { margin-top: 12px; }
+
+.cta-bar .btn { padding: 0 14px; font-size: 14px; }
+.cta-sum { min-width: 80px; }

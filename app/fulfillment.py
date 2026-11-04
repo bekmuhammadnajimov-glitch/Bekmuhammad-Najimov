@@ -237,4 +237,4 @@ async def _complete(order: dict, supplier_id: str | None, codes: list[str] | Non
 async def _fail(order: dict, reason: str) -> None:
     await db.update_order(order["id"], status="failed", error=reason[:500])
     await notify.send_user(order, "failed")
-    await notify.alert_admins(order, "🚨 <b>Buyurtma bajarilmadi</b>", retry_button=True, extra=reason)
+    await notify.alert_admins(order, "🚨 <b>Buyurtma bajarilmadi</b>", retry_button=True, refund_button=True, extra=reason)

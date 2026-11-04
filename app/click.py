@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request
 
-from . import db, fulfillment, notify
+from . import db, fulfillment, notify, payments, wallet
 from .config import CLICK_MERCHANT_ID, CLICK_MERCHANT_USER_ID, CLICK_READY, CLICK_SECRET_KEY, CLICK_SERVICE_ID, WEBAPP_URL
 
 log = logging.getLogger("nexdonate.click")
@@ -153,6 +153,9 @@ async def _complete(base: dict, order: dict, click_trans_id: int, prepare_raw: s
 
     # The money has been taken: mark the order paid whatever its state was (even if it just expired) and deliver.
     await db.execute("UPDATE click_tx SET status = 'completed', updated_at = ? WHERE id = ?", (db.now(), tx["id"]))
+    if wallet.is_topup(order):
+        await payments.credit_topup_order(order, "Click")
+        return _reply(base, OK, merchant_confirm_id=tx["id"])
     await db.update_order(order["id"], status="paid", error=None)
     fresh = await db.get_order(order["id"])
     await notify.send_user(fresh, "payment_confirmed")

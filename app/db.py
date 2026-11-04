@@ -1,4 +1,6 @@
+import asyncio
 import time
+from contextlib import asynccontextmanager
 
 import aiosqlite
 
@@ -49,11 +51,22 @@ CREATE TABLE IF NOT EXISTS incoming_payments (
 );
 CREATE INDEX IF NOT EXISTS idx_incoming_open ON incoming_payments (order_id, amount);
 CREATE INDEX IF NOT EXISTS idx_click_order2 ON click_tx (order_id);
+-- every change of a customer's balance, newest last: top-ups, purchases from the balance, refunds. One row per order and kind, so
+-- an order can never be credited, charged or refunded twice.
+CREATE TABLE IF NOT EXISTS wallet_tx (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, tg_id INTEGER NOT NULL, kind TEXT NOT NULL,
+    amount INTEGER NOT NULL, balance_after INTEGER NOT NULL, order_id TEXT, note TEXT, created_at INTEGER NOT NULL,
+    UNIQUE (order_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_wallet_user ON wallet_tx (tg_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_user ON orders (tg_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders (status);
 """
 
 _db: aiosqlite.Connection | None = None
+# One connection is shared by everybody. Every statement takes this lock, and money moves inside transaction() which holds it for the
+# whole operation, so a half-finished payment can never be committed by somebody else's statement.
+_lock = asyncio.Lock()
 
 
 async def init() -> None:
@@ -87,6 +100,11 @@ async def init() -> None:
     await _db.execute("UPDATE users SET currency = 'UZS' WHERE currency IS NOT 'UZS'")
     await _db.execute("UPDATE users SET setup_done = 1 WHERE lang IS NOT NULL AND setup_done = 0")
     await _db.execute("UPDATE orders SET status = 'cancelled', updated_at = ? WHERE currency = 'RUB' AND status = 'awaiting_payment'", (now(),))
+    if "balance" not in ucols:  # the customer's own money in the shop, in so'm (see wallet.py)
+        await _db.execute("ALTER TABLE users ADD COLUMN balance INTEGER NOT NULL DEFAULT 0")
+    if "client_key" not in cols:  # one key per press of "pay": a network retry returns the same order instead of charging twice
+        await _db.execute("ALTER TABLE orders ADD COLUMN client_key TEXT")
+    await _db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_key ON orders (tg_id, client_key) WHERE client_key IS NOT NULL")
     if "kb_lang" not in ucols:  # the language of the app button under the message field this person was last sent (see botmenu / bot_handlers)
         await _db.execute("ALTER TABLE users ADD COLUMN kb_lang TEXT")
     # amounts can now be in so'm or rubles: `amount` + `currency` replace `amount_uzs`
@@ -103,22 +121,57 @@ async def close() -> None:
 
 
 async def fetchone(sql: str, args: tuple = ()) -> dict | None:
-    async with _db.execute(sql, args) as cur:
-        row = await cur.fetchone()
+    async with _lock:
+        async with _db.execute(sql, args) as cur:
+            row = await cur.fetchone()
     return dict(row) if row else None
 
 
 async def fetchall(sql: str, args: tuple = ()) -> list[dict]:
-    async with _db.execute(sql, args) as cur:
-        rows = await cur.fetchall()
+    async with _lock:
+        async with _db.execute(sql, args) as cur:
+            rows = await cur.fetchall()
     return [dict(r) for r in rows]
 
 
 async def execute(sql: str, args: tuple = ()) -> int:
-    async with _db.execute(sql, args) as cur:
-        last = cur.lastrowid
-    await _db.commit()
+    async with _lock:
+        async with _db.execute(sql, args) as cur:
+            last = cur.lastrowid
+        await _db.commit()
     return last
+
+
+class Tx:
+    """The statements of one transaction (see transaction()). Use ONLY these inside the block: db.fetchone / db.execute would wait for the
+    lock that the block itself holds."""
+
+    def __init__(self, conn: aiosqlite.Connection):
+        self._c = conn
+
+    async def fetchone(self, sql: str, args: tuple = ()) -> dict | None:
+        async with self._c.execute(sql, args) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def execute(self, sql: str, args: tuple = ()) -> int:
+        """Returns the number of rows changed."""
+        async with self._c.execute(sql, args) as cur:
+            return cur.rowcount
+
+
+@asynccontextmanager
+async def transaction():
+    """All or nothing. Leaving the block normally commits; an exception rolls everything back."""
+    async with _lock:
+        await _db.execute("BEGIN IMMEDIATE")
+        try:
+            yield Tx(_db)
+        except BaseException:
+            await _db.rollback()
+            raise
+        else:
+            await _db.commit()
 
 
 def now() -> int:

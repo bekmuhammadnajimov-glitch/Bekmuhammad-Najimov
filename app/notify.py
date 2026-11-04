@@ -19,8 +19,14 @@ bot: Bot | None = (
     Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) if BOT_TOKEN else None
 )
 
+def fmt_money(amount: int) -> str:
+    return f"{int(amount):,}".replace(",", " ")
+
+
 def recipient(order: dict) -> str:
     """Who the order is for, as HTML: @username for Telegram Stars/Premium, "Nick (ID)" or just the ID for games."""
+    if order.get("game") == "topup":
+        return "balans"
     pid = html.escape(order["player_id"])
     g = REGISTRY.get(order.get("game"))
     if g and g.delivery == "code":
@@ -40,6 +46,8 @@ def _redeem_line(order: dict, lang: str) -> str:
 
 def recipient_line(order: dict, lang: str) -> str:
     """The "who is it for" line of a message, labelled for the game: Telegram, Account or Player ID."""
+    if order.get("game") == "topup":
+        return {"uz": "Balansni to'ldirish", "ru": "Пополнение баланса"}[lang]
     g = REGISTRY.get(order.get("game"))
     if g and g.delivery == "code":
         return {"uz": "Yetkazish: <b>kod shu chatga yuboriladi</b>", "ru": "Доставка: <b>код придёт в этот чат</b>"}[lang]
@@ -70,8 +78,16 @@ MSG = {
         "uz": "⚠️ <b>Hozir buyurtmani bajarib bo'lmaydi</b>\nHozir bot <b>{title}</b> tashlab bera olmaydi. «Admin» tugmasini bosing: xabar o'zi yoziladi, shunchaki yuboring. Admin buyurtmangizni qo'lda bajaradi 👇",
         "ru": "⚠️ <b>Сейчас заказ выполнить нельзя</b>\nСейчас бот не может отправить <b>{title}</b>. Нажмите «Админ»: сообщение напишется само, просто отправьте его. Админ выполнит заказ вручную 👇",
     },
+    "topup_done": {
+        "uz": "✅ <b>Balans to'ldirildi!</b>\n+{amount} so'm\nBalansingiz: <b>{balance} so'm</b>\n\nEndi o'yinlarga donat qilishingiz mumkin 🙌",
+        "ru": "✅ <b>Баланс пополнен!</b>\n+{amount} сум\nВаш баланс: <b>{balance} сум</b>\n\nТеперь можно донатить в игры 🙌",
+    },
+    "refunded": {
+        "uz": "↩️ <b>Pul balansingizga qaytarildi</b>\nBuyurtma <code>{code}</code> bajarilmadi, {amount} so'm balansingizga qaytarildi.\nBalansingiz: <b>{balance} so'm</b>.",
+        "ru": "↩️ <b>Деньги вернулись на баланс</b>\nЗаказ <code>{code}</code> не выполнен, {amount} сум возвращены на ваш баланс.\nВаш баланс: <b>{balance} сум</b>.",
+    },
     "failed": {
-        "uz": "❗️ <b>Buyurtma bajarilmadi</b>\nBuyurtma <code>{code}</code> bo'yicha texnik muammo yuz berdi. Administrator buni ko'rib chiqadi — iltimos, qo'llab-quvvatlashga yozing.",
+        "uz": "❗️ <b>Buyurtma bajarilmadi</b>\nBuyurtma <code>{code}</code> bo'yicha texnik muammo yuz berdi. Pulingiz yo'qolmaydi: administrator buni ko'rib chiqadi, buyurtmani qayta yuboradi yoki pulni balansingizga qaytaradi. Iltimos, admin bilan bog'laning.",
         "ru": "❗️ <b>Заказ не выполнен</b>\nПо заказу <code>{code}</code> возникла техническая проблема. Администратор разберётся — пожалуйста, напишите в поддержку.",
     },
 }
@@ -80,6 +96,32 @@ MSG = {
 async def _lang(tg_id: int) -> str:
     row = await db.fetchone("SELECT lang FROM users WHERE tg_id = ?", (tg_id,))
     return (row or {}).get("lang") or "uz"
+
+
+async def _open_kb(lang: str) -> InlineKeyboardMarkup | None:
+    if not WEBAPP_URL:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text={"uz": "🚀 Ochish", "ru": "🚀 Открыть"}[lang], web_app=WebAppInfo(url=WEBAPP_URL))]])
+
+
+async def send_topup_done(order: dict, balance: int) -> None:
+    """Tell the customer in the bot chat that the top-up is on the balance."""
+    await _send_money_note(order, "topup_done", balance)
+
+
+async def send_refund(order: dict, balance: int) -> None:
+    await _send_money_note(order, "refunded", balance)
+
+
+async def _send_money_note(order: dict, key: str, balance: int) -> None:
+    if not bot:
+        return
+    lang = await _lang(order["tg_id"])
+    text = MSG[key][lang].format(code=db.code(order["id"]), amount=fmt_money(order["amount"]), balance=fmt_money(balance))
+    try:
+        await bot.send_message(order["tg_id"], text, reply_markup=await _open_kb(lang))
+    except Exception as e:  # user blocked the bot, etc.
+        log.warning("%s message failed for %s: %s", key, order["tg_id"], e)
 
 
 async def send_user(order: dict, key: str, codes: list[str] | None = None) -> None:
@@ -159,11 +201,12 @@ async def wallet_short(tg_id: int, title: str, game: str = "", recipient: str = 
 
 
 def _admin_order_text(order: dict, title: str) -> str:
+    topup = order.get("game") == "topup"
     return (
         f"{title}\n"
         f"<b>{db.code(order['id'])}</b>\n"
-        f"Mahsulot: <b>{html.escape(order.get('offer_name') or '')}</b>\n"
-        f"{recipient_line(order, 'uz')}\n"
+        + ("" if topup else f"Mahsulot: <b>{html.escape(order.get('offer_name') or '')}</b>\n")
+        + f"{recipient_line(order, 'uz')}\n"
         f"Summa: <b>{order['amount']:,}</b> so'm".replace(",", " ")
         + f"\nMijoz: <code>{order['tg_id']}</code>"
     )
@@ -206,12 +249,13 @@ async def admin_event(kind: str, text: str, order: dict | None = None, tg_id: in
     await _send_admins(f"{text}{who}")
 
 
-async def alert_admins(order: dict, title: str, retry_button: bool = False, extra: str = "") -> None:
+async def alert_admins(order: dict, title: str, retry_button: bool = False, extra: str = "", refund_button: bool = False) -> None:
     kb = None
     if retry_button:
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔁 Qayta urinish", callback_data=f"retry:{order['id']}")]]
-        )
+        row = [InlineKeyboardButton(text="🔁 Qayta urinish", callback_data=f"retry:{order['id']}")]
+        if refund_button:  # the customer paid from the balance: the owner can give the money back with one tap
+            row.append(InlineKeyboardButton(text="↩️ Balansga qaytarish", callback_data=f"refund:{order['id']}"))
+        kb = InlineKeyboardMarkup(inline_keyboard=[row])
     text = _admin_order_text(order, title) + (f"\n\n<code>{html.escape(extra)[:600]}</code>" if extra else "")
     await log_event("alert", f"{title} {db.code(order['id'])} {extra[:200]}", order["id"], order["tg_id"])
     await _send_admins(text, kb)
