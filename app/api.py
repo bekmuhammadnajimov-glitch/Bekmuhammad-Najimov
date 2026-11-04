@@ -576,16 +576,16 @@ class TopupIn(BaseModel):
 
 @router.get("/balance")
 async def get_balance(user: dict = Depends(current_user)):
-    """The customer's balance, what happened to it lately, and a top-up that is still waiting for money or for the owner's check."""
+    """The customer's balance, what happened to it, and the top-ups that are still waiting for money or for the owner's check."""
     await _expire_stale()
-    waiting = await db.fetchone(
-        "SELECT * FROM orders WHERE tg_id = ? AND game = 'topup' AND status IN ('awaiting_payment', 'payment_review') ORDER BY created_at DESC LIMIT 1",
+    waiting = await db.fetchall(
+        "SELECT * FROM orders WHERE tg_id = ? AND game = 'topup' AND status IN ('awaiting_payment', 'payment_review') ORDER BY created_at DESC, rowid DESC LIMIT 3",
         (user["tg_id"],),
     )
     return {
         "balance": await wallet.balance_of(user["tg_id"]),
-        "history": await wallet.history(user["tg_id"]),
-        "pending": _public(waiting) if waiting else None,
+        "history": await wallet.history(user["tg_id"], 100),
+        "pending": [_public(o) for o in waiting],
         "min": TOPUP_MIN, "max": TOPUP_MAX,
     }
 

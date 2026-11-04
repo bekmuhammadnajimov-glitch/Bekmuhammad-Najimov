@@ -49,6 +49,7 @@ const ICONS = {
   wallet: '<path d="M4 7.5A2.5 2.5 0 016.5 5H18v3"/><path d="M4 7.5V17a2 2 0 002 2h13a1 1 0 001-1v-2.5"/><path d="M21 9.5h-5a2.25 2.25 0 000 4.5h5z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
 };
 const ic = (name, cls = '') =>
   `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -305,7 +306,7 @@ const orderRow = (o) => {
 
 /* ---- balance: the bar on the home screen, the card in the profile, one line of the history ---- */
 const balanceBar = () => `<section class="balbar">
-  <div class="balbar-in"><span class="balbar-ic">${ic('wallet')}</span><div class="balbar-tx"><span>${t('balance')}</span><b>${money((S.user && S.user.balance) || 0)}</b></div></div>
+  <div class="balbar-in"><span class="balbar-ic">${ic('wallet')}</span><div class="balbar-tx"><span>${t('balance')}</span><b data-fit>${money((S.user && S.user.balance) || 0)}</b></div></div>
   <button class="btn gold sm" data-act="open-balance">${ic('plus', 'sm')}${t('topup_short')}</button></section>`;
 
 const histRow = (h) => {
@@ -313,11 +314,51 @@ const histRow = (h) => {
   const title = h.kind === 'topup' ? t('bal_k_topup') : h.kind === 'refund' ? `${t('bal_k_refund')} · ${orderTitle(h)}` : orderTitle(h);
   const icon = h.kind === 'purchase' ? 'bag' : h.kind === 'topup' ? 'plus' : 'undo';
   return `<button class="hrow" ${h.order_id ? `data-act="open-order" data-id="${h.order_id}"` : ''}><span class="hic ${plus ? 'in' : ''}">${ic(icon)}</span>
-    <div class="mid"><div class="t">${esc(title)}</div><div class="s">${h.code} · ${when(h.created_at)}</div></div>
-    <div class="end"><b class="${plus ? 'pos' : ''}">${plus ? '+' : '−'}${money(Math.abs(h.amount))}</b><small>${money(h.balance_after)}</small></div></button>`;
+    <div class="mid"><div class="t">${esc(title)}</div><div class="s">${[h.code, when(h.created_at)].filter(Boolean).join(' · ')}</div></div>
+    <div class="end"><b class="${plus ? 'pos' : ''}" data-fit>${plus ? '+' : '−'}${money(Math.abs(h.amount))}</b><small data-fit>${money(h.balance_after)}</small></div></button>`;
 };
-const pendingCard = (o) => (o ? `<div class="card pendcard"><div><span>${t('topup_pending')}</span><b>${money(o.amount)}</b>${tag(o.status)}</div>
-  <button class="btn line sm" data-act="open-order" data-id="${o.id}">${t('topup_continue')}</button></div>` : '');
+// a top-up that was started but not finished yet: the receipt is not sent or the owner is still checking it
+const waitRow = (o) => `<button class="hrow wait" data-act="open-order" data-id="${o.id}"><span class="hic">${ic('clock')}</span>
+  <div class="mid"><div class="t">${t('topup_title')}</div><div class="s">${t(o.status === 'payment_review' ? 'bal_wait_review' : 'bal_wait_pay')}</div></div>
+  <div class="end"><b data-fit>${money(o.amount)}</b>${tag(o.status)}</div></button>`;
+const HIST_TABS = ['all', 'topup', 'buy'];
+const renderHist = () => {
+  const box = $('#balhist'); if (!box || !S.bal) return;
+  const f = S.balFilter || 'all';
+  document.querySelectorAll('#histtabs .chip').forEach((b) => b.classList.toggle('on', b.dataset.f === f));
+  const rows = (S.bal.history || []).filter((h) => f === 'all' || (f === 'topup' ? h.kind === 'topup' : h.kind !== 'topup'));
+  const wait = f === 'buy' ? [] : (S.bal.pending || []);
+  box.innerHTML = wait.length + rows.length
+    ? wait.map(waitRow).join('') + rows.map(histRow).join('')
+    : `<div class="lb-empty">${t(f === 'topup' ? 'bal_empty_topup' : f === 'buy' ? 'bal_empty_buy' : 'bal_empty')}</div>`;
+  fitAmounts(box);
+};
+
+// An amount never runs under its neighbour: its font shrinks until the number fits the box, and when even that is not enough
+// the button (or the amount of a history row) drops under it. Works for any balance, in any language and at any screen width.
+function fitAmounts(root = document) {
+  const over = (el) => { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect().width - el.getBoundingClientRect().width; };   // exact, scrollWidth is rounded
+  const fit = (el) => {
+    el.style.fontSize = '';
+    let size = parseFloat(getComputedStyle(el).fontSize) || 16;
+    const min = Math.max(9, size * 0.6);
+    while (over(el) > 0 && size > min) { size -= 0.5; el.style.fontSize = size + 'px'; }
+    return size;
+  };
+  root.querySelectorAll('[data-fit]').forEach((el) => {
+    const row = el.closest('.balbar, .balcard, .hrow');
+    const lead = row && el === row.querySelector('[data-fit]');   // the first amount of a row decides whether the row stacks
+    if (lead) row.classList.remove('stack');
+    el.style.fontSize = '';
+    const start = parseFloat(getComputedStyle(el).fontSize) || 16;
+    const size = fit(el);
+    if (lead && size < start * 0.85) { row.classList.add('stack'); fit(el); }
+    const title = lead && row.classList.contains('hrow') && !row.classList.contains('stack') && row.querySelector('.t');
+    if (title && title.scrollWidth > title.clientWidth) { row.classList.add('stack'); fit(el); }   // a word of the title does not fit beside the amount
+  });
+}
+window.addEventListener('resize', () => fitAmounts());
+if (document.fonts) { document.fonts.ready.then(() => fitAmounts()); document.fonts.addEventListener('loadingdone', () => fitAmounts()); }   // a font that arrives late (the Russian letters) changes the widths
 
 /* ---------------------------------------------------------------- screens */
 const screens = {};
@@ -926,9 +967,8 @@ screens.balance = (params = {}) => {
   const { min, max } = topupLimits();
   const val = digits(S.topup.amount);
   return `<h1 class="page-title">${t('balance')}</h1>
-  <div class="balhero"><span>${t('balance_title')}</span><b id="bal-amount">${money(S.user.balance || 0)}</b><small>${t('balance_hint')}</small></div>
+  <div class="balhero"><span>${t('balance_title')}</span><b id="bal-amount" data-fit>${money(S.user.balance || 0)}</b><small>${t('balance_hint')}</small></div>
   ${params.need ? `<div class="notice mt">${ic('alert', 'sm')}<span>${t('topup_need', { sum: `<b>${money(params.need)}</b>` })}</span></div>` : ''}
-  <div id="pendbox"></div>
   <h2 class="sec"><span>${t('topup')}</span></h2>
   <div class="card topup">
     <label class="field-label" for="tamount">${t('topup_amount')}</label>
@@ -939,10 +979,11 @@ screens.balance = (params = {}) => {
     <div class="chint" id="tlimits">${t('topup_limits', { min: money(min), max: money(max) })}</div>
     <button class="btn gold block mt" id="topup-btn" data-act="topup-go" ${topupValid() ? '' : 'disabled'}>${ic('plus', 'sm')}${t('topup_go')}</button>
   </div>
-  <details class="help"><summary>${ic('help', 'sm')}${t('topup_how')}</summary>
-    <ol class="steps-list" style="padding:0 16px 8px"><li>${t('topup_s1')}</li><li>${t('topup_s2')}</li><li>${t('topup_s3')}</li></ol></details>
   <h2 class="sec"><span>${t('bal_history')}</span></h2>
-  <div id="balhist"><div class="skeleton" style="height:78px"></div></div>`;
+  <div class="chips hist-tabs" id="histtabs">${HIST_TABS.map((f) => `<button class="chip ${f === (S.balFilter || 'all') ? 'on' : ''}" data-act="bal-filter" data-f="${f}">${t('bal_f_' + f)}</button>`).join('')}</div>
+  <div id="balhist"><div class="skeleton" style="height:78px"></div></div>
+  <details class="help"><summary>${ic('help', 'sm')}${t('topup_how')}</summary>
+    <ol class="steps-list" style="padding:0 16px 8px"><li>${t('topup_s1')}</li><li>${t('topup_s2')}</li><li>${t('topup_s3')}</li></ol></details>`;
 };
 after.balance = async () => {
   const inp = $('#tamount');
@@ -954,12 +995,10 @@ after.balance = async () => {
     const b = await api('/balance');
     S.bal = b; S.user.balance = b.balance;
     if (cur().name !== 'balance') return;
-    const am = $('#bal-amount'); if (am) am.textContent = money(b.balance);
-    const pb = $('#pendbox'); if (pb) pb.innerHTML = pendingCard(b.pending);
+    const am = $('#bal-amount'); if (am) { am.textContent = money(b.balance); fitAmounts(); }
     const lim = $('#tlimits'); if (lim) lim.textContent = t('topup_limits', { min: money(b.min), max: money(b.max) });
     const btn = $('#topup-btn'); if (btn) btn.disabled = !topupValid();
-    const hist = $('#balhist');
-    if (hist) hist.innerHTML = b.history.length ? b.history.map(histRow).join('') : `<div class="lb-empty">${t('bal_empty')}</div>`;
+    renderHist();
   } catch (_) {
     const hist = $('#balhist'); if (hist) hist.innerHTML = `<div class="errbox"><h3>${t('err_generic')}</h3></div>`;
   }
@@ -1007,10 +1046,10 @@ screens.profile = () => {
   const saved = S.savedIds;
   return `<h1 class="page-title">${t('tab_profile')}</h1>
   <div class="card-hl profile-head">${avatar}<div><div class="n">${esc(name)}</div><div class="u">${u.username ? '@' + esc(u.username) + ' · ' : ''}ID ${u.id}</div></div></div>
-  <div class="card-hl balcard"><div><span>${t('balance_title')}</span><b>${money(u.balance || 0)}</b></div>
+  <div class="card-hl balcard"><div class="balcard-tx"><span>${t('balance_title')}</span><b data-fit>${money(u.balance || 0)}</b></div>
     <button class="btn gold sm" data-act="open-balance">${ic('plus', 'sm')}${t('topup_short')}</button></div>
   <div class="stats"><div class="stat"><span>${t('stat_orders')}</span><b>${fmt(S.stats.orders)}</b></div>
-    <div class="stat"><span>${t('stat_spent')}</span><b>${money(S.stats.spent.UZS || 0)}</b></div></div>
+    <div class="stat"><span>${t('stat_spent')}</span><b data-fit>${money(S.stats.spent.UZS || 0)}</b></div></div>
   <h2 class="sec">${t('saved_ids')}</h2>
   <div class="list">${saved.length ? saved.map((s) => `<div class="li">${ic('id')}<div class="grow"><div>${esc(s.nick || gameOf(s.game).name)}</div><div class="sub">${esc(gameOf(s.game).name)} · ${esc(shownId(s.player_id, gameOf(s.game).kind))}</div></div><button class="del" data-act="del-id" data-id="${s.id}" aria-label="delete">${ic('trash', 'sm')}</button></div>`).join('') : `<div class="li" style="color:var(--muted);font-size:13px">${t('no_saved')}</div>`}</div>
   <h2 class="sec">${t('settings')}</h2>
@@ -1045,6 +1084,7 @@ function render() {
   if (isTab) renderTabbar(c.name);
   window.scrollTo(0, 0);
   if (tg && tg.BackButton) { S.stack.length > 1 ? tg.BackButton.show() : tg.BackButton.hide(); }
+  fitAmounts(view);
   if (after[c.name]) after[c.name](c.params || {});
 }
 
@@ -1122,6 +1162,7 @@ const actions = {
   },
   noop: () => {},
   'open-balance': () => go('balance'),
+  'bal-filter': (el) => { S.balFilter = el.dataset.f; renderHist(); haptic('light'); },
   'topup-need': () => go('balance', { need: S.confirm ? S.confirm.missing : 0 }),
   'topup-chip': (el) => {
     S.topup.amount = String(el.dataset.v); const i = $('#tamount'); if (i) i.value = fmt(S.topup.amount);
