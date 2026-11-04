@@ -1056,7 +1056,7 @@ async function refreshBoot() {
 async function boot() {
   if (tg) {
     tg.ready(); tg.expand();
-    try { tg.setHeaderColor('#0a0f20'); tg.setBackgroundColor('#0a0f20'); tg.setBottomBarColor && tg.setBottomBarColor('#0c1228'); } catch (_) {}
+    try { tg.setHeaderColor('#ffffff'); tg.setBackgroundColor('#ffffff'); tg.setBottomBarColor && tg.setBottomBarColor('#ffffff'); } catch (_) {}
     try { tg.disableVerticalSwipes && tg.disableVerticalSwipes(); } catch (_) {}
     tg.BackButton && tg.BackButton.onClick(back);
   }
