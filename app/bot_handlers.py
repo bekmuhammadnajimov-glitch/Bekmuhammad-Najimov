@@ -35,7 +35,6 @@ dp = Dispatcher()
 
 TEXT = {
     "uz": {
-        "fallback": "Buyurtma berish uchun «Ochish» tugmasini bosing, savol bo'lsa admin bilan bog'laning 👇",
         "welcome": "Paketni tanlang, ID kiriting, to'lang — qolganini biz bajaramiz.",
         "cancel_btn": "❌ Bekor qilish",
         "pay_instr": "💳 <b>To'lov</b> · <code>{code}</code>\n\nMahsulot: <b>{title}</b>\n{recipient_line}\n\nTo'lov summasi: <b>{amount}</b>\n❗️ <b>Aynan shu summani</b> o'tkazing.\n\nKarta raqami (bosib nusxalang):\n<code>{card}</code>\n{card_info}\n⏳ {minutes} daqiqa ichida to'lang.\nTo'lagach <b>chek skrinshotini</b> shu chatga yuboring 👇",
@@ -58,7 +57,6 @@ TEXT = {
         "cur_name": {"UZS": "so'm", "RUB": "rubl"},
     },
     "ru": {
-        "fallback": "Чтобы сделать заказ, нажмите «Открыть», а по вопросам напишите админу 👇",
         "welcome": "Выберите пакет, введите ID, оплатите — остальное мы сделаем сами.",
         "cancel_btn": "❌ Отменить",
         "pay_instr": "💳 <b>Оплата</b> · <code>{code}</code>\n\nТовар: <b>{title}</b>\n{recipient_line}\n\nСумма к оплате: <b>{amount}</b>\n❗️ Переведите <b>ровно эту сумму</b>.\n\nНомер карты (нажмите, чтобы скопировать):\n<code>{card}</code>\n{card_info}\n⏳ Оплатите в течение {minutes} минут.\nПосле оплаты отправьте <b>скриншот чека</b> в этот чат 👇",
@@ -143,6 +141,9 @@ async def _ask_language(message: Message) -> None:
     await message.answer(ASK_LANGUAGE, reply_markup=_lang_kb())
 
 
+_banner_ids: dict[str, str] = {}  # language -> Telegram's id of the banner once it was uploaded, so it is not uploaded again for every message
+
+
 async def _send_welcome(target: Message, user_row: dict) -> None:
     """The normal start message (banner + Open/Admin buttons) in the user's language, with their saved choices."""
     lang = user_row["lang"] or "uz"
@@ -150,7 +151,9 @@ async def _send_welcome(target: Message, user_row: dict) -> None:
     caption = f"{t['welcome']}\n\n" + t["prefs"].format(lang=t["lang_name"], cur=t["cur_name"].get(user_row["currency"] or "UZS", "so'm"))
     banner = WEBAPP_DIR / "assets" / f"banner_{lang}.png"
     if banner.exists():
-        await target.answer_photo(FSInputFile(banner), caption=caption, reply_markup=_main_kb(lang))
+        sent = await target.answer_photo(_banner_ids.get(lang) or FSInputFile(banner), caption=caption, reply_markup=_main_kb(lang))
+        if lang not in _banner_ids and sent is not None and getattr(sent, "photo", None):
+            _banner_ids[lang] = sent.photo[-1].file_id
     else:
         await target.answer(caption, reply_markup=_main_kb(lang))
     await _sync_menu(user_row)
@@ -600,11 +603,7 @@ async def retry_order(cb: CallbackQuery) -> None:
 
 
 # Must stay the LAST handler: it answers anything the handlers above did not take (plain text, photos, stickers,
-# unknown commands) in private chats with the same "Open" and "Admin" buttons.
+# unknown commands) in private chats with the same message as /start (banner, the person's choices, "Open" and "Admin" buttons).
 @dp.message(F.chat.type == "private")
 async def fallback(message: Message) -> None:
-    async def reply(msg: Message, row: dict) -> None:
-        lang = row["lang"] or "uz"
-        await msg.answer(TEXT[lang]["fallback"], reply_markup=_main_kb(lang))
-
-    await _onboard_or(message, reply)
+    await _onboard_or(message, _send_welcome)
