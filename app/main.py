@@ -4,7 +4,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 
-from aiogram.types import BotCommand, MenuButtonCommands, MenuButtonDefault
+from aiogram.types import BotCommand, MenuButtonCommands, ReplyKeyboardRemove
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
@@ -127,18 +127,25 @@ async def _refresh_user_menus() -> None:
     marker.write_text("done")
 
 
-async def _reset_chat_menus() -> None:
-    """Earlier versions gave each chat its own Mini App button. Put every known chat back on the bot's menu (commands), once."""
-    marker = DATA_DIR / "menu_reset_v1"
-    if marker.exists():
-        return
+async def _restore_menus() -> None:
+    """Everybody who already has a chat with the bot gets the Mini App button (the owner too)."""
     for row in await db.fetchall("SELECT tg_id FROM users"):
-        try:
-            await notify.bot.set_chat_menu_button(chat_id=row["tg_id"], menu_button=MenuButtonDefault())
-        except Exception as e:  # blocked the bot, etc.
-            log.warning("could not reset the menu button of %s: %s", row["tg_id"], e)
+        await notify.ensure_menu(row["tg_id"])
         await asyncio.sleep(0.1)
-    marker.write_text("done")
+
+
+async def _remove_old_keyboards() -> None:
+    """The persistent "Open" button under the message field was sent to a few chats for a short while: take it away, quietly, once."""
+    rows = await db.fetchall("SELECT tg_id FROM users WHERE kb_lang IS NOT NULL")
+    for r in rows:
+        try:
+            m = await notify.bot.send_message(r["tg_id"], "✅", reply_markup=ReplyKeyboardRemove())
+            await asyncio.sleep(1)
+            await notify.bot.delete_message(r["tg_id"], m.message_id)
+        except Exception as e:  # blocked the bot, etc.
+            log.warning("could not remove the keyboard of %s: %s", r["tg_id"], e)
+        await db.execute("UPDATE users SET kb_lang = NULL WHERE tg_id = ?", (r["tg_id"],))
+        await asyncio.sleep(0.1)
 
 
 @asynccontextmanager
@@ -162,12 +169,14 @@ async def lifespan(app: FastAPI):
     await db.init()
     polling = None
     if notify.bot:
-        try:  # the menu button is Telegram's commands menu (Start, Til, So'm / Rubl); a new person sees the START button first
+        try:  # the default menu button is Telegram's own: a new person sees the START button; the Mini App button is set per chat after START
             await notify.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
         except Exception as e:
             log.warning("could not set menu button: %s", e)
-        menus = asyncio.create_task(_reset_chat_menus())
-        menus.add_done_callback(lambda t: t.exception() and log.warning("resetting menu buttons failed: %s", t.exception()))
+        menus = asyncio.create_task(_restore_menus())  # customers who started earlier keep their Mini App button
+        menus.add_done_callback(lambda t: t.exception() and log.warning("restoring menu buttons failed: %s", t.exception()))
+        kbs = asyncio.create_task(_remove_old_keyboards())
+        kbs.add_done_callback(lambda t: t.exception() and log.warning("removing keyboards failed: %s", t.exception()))
         menus2 = asyncio.create_task(_refresh_user_menus())
         menus2.add_done_callback(lambda t: t.exception() and log.warning("refreshing the menus failed: %s", t.exception()))
         try:

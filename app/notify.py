@@ -6,10 +6,10 @@ from urllib.parse import quote
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, WebAppInfo
 
 from . import db
-from .config import ADMIN_IDS, BOT_TOKEN, BOT_USERNAME, SUPPORT_USERNAME
+from .config import ADMIN_IDS, BOT_TOKEN, BOT_USERNAME, SUPPORT_USERNAME, WEBAPP_URL
 from .games import REGISTRY
 
 log = logging.getLogger("nexdonate.notify")
@@ -97,6 +97,22 @@ async def send_user(order: dict, key: str, codes: list[str] | None = None) -> No
         await bot.send_message(order["tg_id"], text)
     except Exception as e:  # user blocked the bot, etc.
         log.warning("send_user failed for %s: %s", order["tg_id"], e)
+
+
+_menu_set: set[int] = set()
+
+
+async def ensure_menu(tg_id: int) -> None:
+    """The Mini App's menu button belongs to the chat of someone who has pressed START. Nobody has it before that: the bot's default menu
+    button is Telegram's own, so a person who opens the bot for the first time gets the START button."""
+    if not bot or not WEBAPP_URL or tg_id in _menu_set:
+        return
+    _menu_set.add(tg_id)
+    try:
+        await bot.set_chat_menu_button(chat_id=tg_id, menu_button=MenuButtonWebApp(text="NexDonate", web_app=WebAppInfo(url=WEBAPP_URL)))
+    except Exception as e:  # blocked the bot, etc.: try again the next time they write
+        _menu_set.discard(tg_id)
+        log.warning("could not set the menu button for %s: %s", tg_id, e)
 
 
 async def support_username() -> str:
